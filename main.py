@@ -2,6 +2,7 @@
 import asyncio
 import sys
 import platform
+import signal
 from logging import getLogger, basicConfig
 
 from pywebio import start_server
@@ -26,7 +27,6 @@ logger.setLevel('DEBUG')
 
 
 async def main():
-    # ------------------- 以下代码完全保持不变 -------------------
     put_markdown("## 狼人杀法官")
     current_user = User.alloc(
         await input('请输入你的昵称',
@@ -66,7 +66,9 @@ async def main():
     room.add_player(current_user)
 
     while True:
+
         await asyncio.sleep(0.2)
+
         # 非夜晚房主操作
         host_ops = []
         if current_user is room.get_host():
@@ -82,6 +84,17 @@ async def main():
                         help_text='你是房主，本轮需要选择出局玩家'
                     )
                 ]
+
+        # === 添加：房主专属关闭服务器按钮 ===
+        if current_user is room.get_host():
+            host_ops.append(
+                actions(
+                    name='shutdown_server',
+                    buttons=['[房主] 结束游戏并关闭服务器'],
+                    help_text='点击后所有玩家断开，服务器关闭'
+                )
+            )
+        # === 结束添加 ===
 
         # 玩家操作
         user_ops = []
@@ -162,6 +175,23 @@ async def main():
         # Guard logic
         if data.get('guard_team_op'):
             current_user.guard_protect_player(nick=data.get('guard_team_op'))
+        
+        # === 添加：处理关闭服务器 ===
+        if data.get('shutdown_server'):
+            put_markdown("## 服务器正在关闭...")
+            await asyncio.sleep(1)
+
+            # 停止 Tornado 事件循环
+            import tornado.ioloop
+            ioloop = tornado.ioloop.IOLoop.current()
+            ioloop.add_callback(ioloop.stop)
+
+            # # 保持页面，不再响应输入
+            # from pywebio.session import hold
+            # hold()  # 程序在此暂停，等待 IOLoop 停止
+
+            logger.info("服务器已由房主关闭")
+            return  # 退出 main() 函数
 
 
 # ==================== 启动入口 ====================
@@ -173,6 +203,16 @@ if __name__ == '__main__':
     # 【Python 3.14 必须】手动创建并设置事件循环
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
+    # 允许 Ctrl+C 退出
+    import signal
+    def stop_server(signum, frame):
+        logger.info("正在关闭服务器...")
+        import tornado.ioloop
+        tornado.ioloop.IOLoop.current().add_callback(
+            tornado.ioloop.IOLoop.current().stop
+        )
+    signal.signal(signal.SIGINT, stop_server)
 
     ip   = get_interface_ip()
     port = 8080  # 开发用 8080
