@@ -1,4 +1,4 @@
-﻿# main.py
+# main.py
 import asyncio
 import sys
 import platform
@@ -15,10 +15,9 @@ from models.room import Room
 from models.user import User
 from utils import add_cancel_button, get_interface_ip
 
-#接入外网
-# from pyngrok import ngrok
-# public_url = ngrok.connect(8080)
-# logger.info(f"外网地址：{public_url}")
+# ==================== 接入外网：pyngrok ====================
+from pyngrok import ngrok
+import threading
 
 basicConfig(stream=sys.stdout,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -66,7 +65,6 @@ async def main():
     room.add_player(current_user)
 
     while True:
-
         await asyncio.sleep(0.2)
 
         # 非夜晚房主操作
@@ -85,7 +83,7 @@ async def main():
                     )
                 ]
 
-        # === 添加：房主专属关闭服务器按钮 ===
+        # === 房主专属关闭服务器按钮 ===
         if current_user is room.get_host():
             host_ops.append(
                 actions(
@@ -94,7 +92,6 @@ async def main():
                     help_text='点击后所有玩家断开，服务器关闭'
                 )
             )
-        # === 结束添加 ===
 
         # 玩家操作
         user_ops = []
@@ -144,13 +141,11 @@ async def main():
         if not ops:
             continue
 
-        # UI
         if host_ops + user_ops:
             current_user.input_blocking = True
         data = await input_group('操作', inputs=host_ops + user_ops, cancelable=True)
         current_user.input_blocking = False
 
-        # Canceled
         if data is None:
             current_user.skip()
             continue
@@ -160,52 +155,40 @@ async def main():
             await room.start_game()
         if data.get('host_vote_op'):
             await room.vote_kill(data.get('host_vote_op'))
-        # Wolf logic
         if data.get('wolf_team_op'):
             current_user.wolf_kill_player(nick=data.get('wolf_team_op'))
-        # Detective logic
         if data.get('detective_team_op'):
             current_user.detective_identify_player(nick=data.get('detective_team_op'))
-        # Witch logic
         if data.get('witch_team_op'):
             if data.get('witch_mode') == '解药':
                 current_user.witch_heal_player(nick=data.get('witch_team_op'))
             elif data.get('witch_mode') == '毒药':
                 current_user.witch_kill_player(nick=data.get('witch_team_op'))
-        # Guard logic
         if data.get('guard_team_op'):
             current_user.guard_protect_player(nick=data.get('guard_team_op'))
         
-        # === 添加：处理关闭服务器 ===
+        # === 处理关闭服务器 ===
         if data.get('shutdown_server'):
             put_markdown("## 服务器正在关闭...")
             await asyncio.sleep(1)
-
-            # 停止 Tornado 事件循环
             import tornado.ioloop
             ioloop = tornado.ioloop.IOLoop.current()
             ioloop.add_callback(ioloop.stop)
-
-            # # 保持页面，不再响应输入
-            # from pywebio.session import hold
-            # hold()  # 程序在此暂停，等待 IOLoop 停止
-
             logger.info("服务器已由房主关闭")
-            return  # 退出 main() 函数
+            return
 
 
-# ==================== 启动入口 ====================
+# ==================== 启动入口（Mac 优化 + pyngrok） ====================
 if __name__ == '__main__':
-    # Windows 事件循环策略
+    # 兼容 Windows 事件循环
     if platform.system() == 'Windows':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    # 【Python 3.14 必须】手动创建并设置事件循环
+    # 手动创建事件循环（Python 3.14+ 推荐）
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
     # 允许 Ctrl+C 退出
-    import signal
     def stop_server(signum, frame):
         logger.info("正在关闭服务器...")
         import tornado.ioloop
@@ -214,12 +197,31 @@ if __name__ == '__main__':
         )
     signal.signal(signal.SIGINT, stop_server)
 
-    ip   = get_interface_ip()
-    port = 8080  # 开发用 8080
+    port = 8080
+    ip = get_interface_ip()
 
-    logger.info(f"狼人杀服务器启动成功！浏览器访问 http://{ip}:{port}")
+    # ==================== 启动 pyngrok 隧道 ====================
+    try:
+        public_url = ngrok.connect(port, bind_tls=True)
+        ngrok_url = str(public_url).replace("NgrokTunnel: \"", "").replace("\"", "")
+        print("\n" + "="*70)
+        print("       狼人杀已上线！全球可玩！")
+        print(f"       局域网地址 → http://{ip}:{port}")
+        print(f"       公网地址 → {ngrok_url}")
+        print("       分享这个链接给所有玩家：")
+        print(f"       {ngrok_url}")
+        print("="*70 + "\n")
+    except Exception as e:
+        print(f"ngrok 启动失败（可能是网络问题）：{e}")
+        print(f"仅限局域网：http://{ip}:{port}")
+        ngrok_url = None
 
-    # 直接启动 PyWebIO
+    logger.info(f"狼人杀服务器启动成功！")
+    logger.info(f"局域网访问：http://{ip}:{port}")
+    if ngrok_url:
+        logger.info(f"外网访问：{ngrok_url}")
+
+    # 启动 PyWebIO 服务
     start_server(
         main,
         debug=False,
@@ -227,4 +229,6 @@ if __name__ == '__main__':
         port=port,
         cdn=False,
         auto_open_webbrowser=False,
+        websocket_ping_interval=25,   # 防止云端断线
+        allowed_origins=["*"],        # 允许 ngrok 跨域
     )
