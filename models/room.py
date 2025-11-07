@@ -1,3 +1,4 @@
+# models/room.py
 import asyncio
 import random
 from collections import Counter
@@ -5,7 +6,9 @@ from copy import copy
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple, Union
 
-from pywebio import run_async
+# 旧的 run_async 已经被移除
+# from pywebio import run_async
+from pywebio.session import run_asyncio_coroutine   # 新 API
 from pywebio.session.coroutinebased import TaskHandle
 
 from enums import Role, WitchRule, GuardRule, GameStage, LogCtrl, PlayerStatus
@@ -180,7 +183,8 @@ class Room:
 
             await asyncio.sleep(5)
 
-        self.logic_thread = run_async(self.night_logic())
+        # 关键改动：使用 run_asyncio_coroutine 启动后台协程
+        self.logic_thread = run_asyncio_coroutine(self.night_logic())
 
     def stop_game(self, reason=''):
         """结束游戏"""

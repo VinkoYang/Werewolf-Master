@@ -167,15 +167,15 @@ async def main():
         if data.get('guard_team_op'):
             current_user.guard_protect_player(nick=data.get('guard_team_op'))
         
-        # === 处理关闭服务器 ===
-        if data.get('shutdown_server'):
-            put_markdown("## 服务器正在关闭...")
-            await asyncio.sleep(1)
-            import tornado.ioloop
-            ioloop = tornado.ioloop.IOLoop.current()
-            ioloop.add_callback(ioloop.stop)
-            logger.info("服务器已由房主关闭")
-            return
+#        # === 处理关闭服务器 ===
+#        if data.get('shutdown_server'):
+#            put_markdown("## 服务器正在关闭...")
+#            await asyncio.sleep(1)
+#            import tornado.ioloop
+#            ioloop = tornado.ioloop.IOLoop.current()
+#            ioloop.add_callback(ioloop.stop)
+#            logger.info("服务器已由房主关闭")
+#            return
 
 
 # ==================== 启动入口（Mac 优化 + pyngrok） ====================
