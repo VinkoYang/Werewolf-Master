@@ -30,7 +30,7 @@ def player_action(func):
         rv = func(self, *args, **kwargs)
         if rv in [None, True]:
             self.room.waiting = False
-            self.room.enter_null_stage()
+            #self.room.enter_null_stage()
         if isinstance(rv, str):
             self.send_msg(text=rv)
 
@@ -49,6 +49,7 @@ class User:
     role: Optional[Role] = None
     skill: dict = None
     status: Optional[PlayerStatus] = None
+    seat: Optional[int] = None  # Add this
 
     game_msg: OutputHandler = None
     game_msg_syncer: Optional[TaskHandle] = None
@@ -123,43 +124,50 @@ class User:
             GameStage.SEER: [Role.SEER],
             GameStage.WOLF: [Role.WOLF, Role.WOLF_KING],
             GameStage.DREAMER: [Role.DREAMER],
-            GameStage.SHERIFF: [],
-            'SPEECH': [],
+            # ... (assuming other stages if needed)
         }
-        return (self.role in stage_map.get(self.room.stage if self.room else None, [])
-                and self.status != PlayerStatus.DEAD)
+        return self.status != PlayerStatus.DEAD and self.role in stage_map.get(self.room.stage, [])
 
-    def witch_has_heal(self):
-        return self.skill.get('heal', False) is True
+    def witch_has_heal(self) -> bool:
+        return self.skill.get('heal', False)
 
-    def witch_has_poison(self):
-        return self.skill.get('poison', False) is True
+    def witch_has_poison(self) -> bool:
+        return self.skill.get('poison', False)
 
     @player_action
     def skip(self):
         pass
 
+
     @player_action
     def wolf_kill_player(self, nick):
-        target = self.room.players.get(nick)
+        if nick == '取消':
+            return None  # Skip without error, but end phase for single-player; for multi, no effect
+        target_nick = nick.split('.')[-1].strip()
+        if target_nick == self.nick:
+            return '不能击杀自己'
+        target = self.room.players.get(target_nick)
         if not target or target.status == PlayerStatus.DEAD:
             return '目标已死亡'
         target.status = PlayerStatus.PENDING_DEAD
+        self.send_msg(f'你选择了击杀 {target_nick}')
         return True  # 必须返回 True
 
     @player_action
     def seer_identify_player(self, nick):
-        target = self.room.players.get(nick)
+        target_nick = nick.split('.')[-1].strip()
+        target = self.room.players.get(target_nick)
         if not target:
             return '查无此人'
-        self.send_msg(f'玩家 {nick} 的身份是 {target.role}')
+        self.send_msg(f'玩家 {target_nick} 的身份是 {target.role}')
         return True  # 必须返回 True
 
     @player_action
     def witch_kill_player(self, nick):
         if not self.witch_has_poison():
             return '没有毒药了'
-        target = self.room.players.get(nick)
+        target_nick = nick.split('.')[-1].strip()
+        target = self.room.players.get(target_nick)
         if not target or target.status == PlayerStatus.DEAD:
             return '目标已死亡'
         target.status = PlayerStatus.PENDING_POISON

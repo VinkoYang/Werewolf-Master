@@ -102,7 +102,7 @@ async def main():
                 user_ops += [
                     actions(
                         name='wolf_team_op',
-                        buttons=add_cancel_button([u.nick for u in room.list_alive_players()]),
+                        buttons=add_cancel_button([f"{u.seat}. {u.nick}" for u in room.list_alive_players()]),
                         help_text='狼人，请选择要击杀的对象。'
                     )
                 ]
@@ -112,7 +112,7 @@ async def main():
                 user_ops += [
                     actions(
                         name='seer_team_op',
-                        buttons=[u.nick for u in room.list_alive_players()],  # 可以查自己
+                        buttons=[f"{u.seat}. {u.nick}" for u in room.list_alive_players()],  # 可以查自己
                         help_text='预言家，请选择要查验的对象。'
                     )
                 ]
@@ -129,7 +129,7 @@ async def main():
                     radio(name='witch_mode', options=['解药', '毒药'], required=True, inline=True),
                     actions(
                         name='witch_team_op',
-                        buttons=add_cancel_button([u.nick for u in room.list_alive_players()]),
+                        buttons=add_cancel_button([f"{u.seat}. {u.nick}" for u in room.list_alive_players()]),
                         help_text='女巫，请选择你的操作。'
                     )
                 ]
@@ -139,7 +139,7 @@ async def main():
                 user_ops += [
                     actions(
                         name='guard_team_op',
-                        buttons=add_cancel_button([u.nick for u in room.list_alive_players()]),
+                        buttons=add_cancel_button([f"{u.seat}. {u.nick}" for u in room.list_alive_players()]),
                         help_text='守卫，请选择要守护的对象。'
                     )
                 ]
@@ -149,9 +149,7 @@ async def main():
                 user_ops += [
                     actions(
                         name='dreamer_team_op',
-                        buttons=add_cancel_button(
-                            [u.nick for u in room.list_alive_players() if u.nick != current_user.nick]
-                        ),
+                        buttons=add_cancel_button([f"{u.seat}. {u.nick}" for u in room.list_alive_players() if u.nick != current_user.nick]),
                         help_text='摄梦人，请选择今晚的梦游者（未选系统随机）'
                     )
                 ]
@@ -215,7 +213,8 @@ async def main():
         if data.get('host_op') == '开始游戏':
             await room.start_game()
         if data.get('host_vote_op'):
-            await room.vote_kill(data.get('host_vote_op'))
+            voted_nick = data.get('host_vote_op').split('.')[-1].strip()
+            await room.vote_kill(voted_nick)  # But wait, vote_kill doesn't exist—fix below
             # 🔥 新增：检查是否猎人被投出，可以立即开枪
             voted_out = room.players.get(data.get('host_vote_op'))
             if voted_out and voted_out.role == Role.HUNTER and voted_out.skill.get('can_shoot', False):

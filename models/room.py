@@ -6,6 +6,7 @@ from copy import copy
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple, Union
 
+from pywebio import run_async
 from pywebio.session.coroutinebased import TaskHandle
 
 from enums import Role, WitchRule, GuardRule, GameStage, LogCtrl, PlayerStatus
@@ -14,6 +15,56 @@ from models.user import User
 from utils import say
 from . import logger
 
+# ──────────────────────────────────────────────────────────────
+# 摄梦人逻辑（原 roles.py 内容）
+# ──────────────────────────────────────────────────────────────
+def apply_dreamer_logic(room) -> None:
+    """
+    夜晚结束后统一结算摄梦人技能
+    1. 免疫夜间伤害（狼刀、毒）
+    2. 连续两晚同一人 → 死亡
+    3. 摄梦人死亡 → 梦游者同死
+    """
+    dreamer_user = next((u for u in room.players.values() if u.role == Role.DREAMER), None)
+    if not dreamer_user:
+        return
+
+    # 1. 未手动选择 → 随机
+    if dreamer_user.skill['curr_dream_target'] is None:
+        alive = [u.nick for u in room.list_alive_players() if u.nick != dreamer_user.nick]
+        if alive:
+            dreamer_user.skill['curr_dream_target'] = random.choice(alive)
+
+    target_nick = dreamer_user.skill['curr_dream_target']
+    target_user = room.players.get(target_nick)
+    if not target_user:
+        return
+
+    # 2. 连续两晚同一人 → 死亡
+    if dreamer_user.skill['last_dream_target'] == target_nick:
+        target_user.status = PlayerStatus.DEAD
+        room.broadcast_msg(f"{target_nick} 因连续两晚被摄梦而死亡", tts=True)
+        if target_user.role in (Role.HUNTER, Role.WOLF_KING):
+            target_user.skill['can_shoot'] = False
+        dreamer_user.skill['dreamer_nick'] = None
+    else:
+        # 正常梦游 → 夜间免疫
+        dreamer_user.skill['dreamer_nick'] = target_nick
+        target_user.skill['dream_immunity'] = True
+
+    # 3. 保存本晚为上晚
+    dreamer_user.skill['last_dream_target'] = target_nick
+    dreamer_user.skill['curr_dream_target'] = None
+
+    # 4. 摄梦人本晚已死 → 梦游者同死
+    if dreamer_user.status == PlayerStatus.DEAD and dreamer_user.skill['dreamer_nick']:
+        dream_nick = dreamer_user.skill['dreamer_nick']
+        dream_u = room.players.get(dream_nick)
+        if dream_u and dream_u.status != PlayerStatus.DEAD:
+            dream_u.status = PlayerStatus.DEAD
+            room.broadcast_msg(f"摄梦人死亡，梦游者 {dream_nick} 随之出局", tts=True)
+            if dream_u.role in (Role.HUNTER, Role.WOLF_KING):
+                dream_u.skill['can_shoot'] = False
 
 @dataclass
 class Room:
@@ -40,6 +91,97 @@ class Room:
     current_speaker: Optional[str] = None
     sheriff_speakers: Optional[List[str]] = None
     sheriff_speaker_index: int = 0
+
+    async def start_game(self):
+        """房主点击【开始游戏】后执行"""
+        if self.started:
+            return
+        # 游戏开始时，会检查玩家人数是否足够，如果不足则广播提示无法开始。
+        if len(self.players) < len(self.roles):
+            self.broadcast_msg("人数不足，无法开始游戏！", tts=True)
+            return
+
+        # 人数足够后，系统会洗牌发放身份，并为女巫初始化药水状态。
+        self.started = True
+        self.broadcast_msg("游戏开始！身份发放中...", tts=True)
+        await asyncio.sleep(2)
+
+        # 1. 洗牌发身份
+        # 角色池通过随机洗牌后逐个分配给玩家，确保身份随机性
+        random.shuffle(self.roles_pool)
+        for user in self.players.values():
+            user.role = self.roles_pool.pop()
+            user.status = PlayerStatus.ALIVE
+            # 女巫初始药水
+            if user.role == Role.WITCH:
+                user.skill['heal'] = True
+                user.skill['poison'] = True
+            # 其他神职默认 can_shoot = True（已在 __post_init__）
+            user.send_msg(f"你的身份是：{user.role.value}")
+            #self.broadcast_msg(f"{user.nick} 身份已发放", tts=False)
+
+        await asyncio.sleep(3)
+
+        # 2. 启动夜晚主线程（只启动一次）
+        # 身份发放后，启动游戏主循环线程，并设置等待状态为False。
+        if self.logic_thread is None:
+            self.logic_thread = run_async(self.game_loop())
+
+        # 3. 房主不再看到“开始游戏”按钮
+        self.waiting = False
+
+    async def game_loop(self):
+        """游戏主循环：夜晚 → 天亮 → 检查胜负"""
+        while True:
+            if not self.started:
+                await asyncio.sleep(1)
+                continue
+
+            # 夜晚
+            await self.night_logic()
+
+            # 这里白天阶段已经由 night_logic 最后设置成 GameStage.Day
+            # 房主会看到“公布死亡”按钮，点完后会再次进入 night_logic
+
+            # 检查胜负（防止卡死）
+            await self.check_game_end()
+
+            await asyncio.sleep(1)
+
+    async def check_game_end(self):
+        """每轮结束后检查是否结束"""
+        alive_wolves = [u for u in self.list_alive_players() if u.role in (Role.WOLF, Role.WOLF_KING)]
+        alive_gods = [u for u in self.list_alive_players() if u.role in (Role.SEER, Role.WITCH, Role.GUARD, Role.HUNTER, Role.DREAMER)]
+        alive_citizens = [u for u in self.list_alive_players() if u.role == Role.CITIZEN]
+
+        good_alive = len(alive_gods) + len(alive_citizens)
+        wolf_alive = len(alive_wolves)
+
+        if wolf_alive == 0:
+            await self.end_game("好人阵营获胜！狼人全部出局")
+            return
+        if wolf_alive >= good_alive:
+            await self.end_game("狼人阵营获胜！好人被屠光")
+            return
+
+    async def end_game(self, reason: str):
+        """游戏结束"""
+        self.started = False
+        self.stage = None
+        self.broadcast_msg(f"游戏结束，{reason}。", tts=True)
+        await asyncio.sleep(2)
+
+        for nick, user in self.players.items():
+            role_name = user.role.value if user.role else "无"
+            self.broadcast_msg(f"{nick}：{role_name}", tts=True)
+            user.role = None
+            user.status = None
+            user.skill.clear()
+
+        # 清理线程
+        if self.logic_thread:
+            self.logic_thread.close()
+            self.logic_thread = None
 
     async def night_logic(self):
         """单夜逻辑"""
@@ -111,266 +253,75 @@ class Room:
             self.broadcast_msg('摄梦人请闭眼', tts=True)
             await asyncio.sleep(2)
 
-            
         # 猎人（仅查看开枪状态）
         if Role.HUNTER in self.roles:
             self.stage = GameStage.HUNTER
             self.broadcast_msg('猎人请出现', tts=True)
-            await asyncio.sleep(1.5)
-
-            hunter = next((u for u in self.players.values() if u.role == Role.HUNTER), None)
-            if hunter:
-                can_shoot = hunter.skill.get('can_shoot', True)
-                status = "可以开枪" if can_shoot else "无法开枪（被毒杀或梦游死亡）"
-                # 直接发私聊，绕过 player_action 等待机制
-                hunter.send_msg(f'Private: 你的开枪状态：{status}')
-
-            await asyncio.sleep(3)
+            await asyncio.sleep(1)
+            self.waiting = True
+            await self.wait_for_player()
+            await asyncio.sleep(1)
             self.broadcast_msg('猎人请闭眼', tts=True)
             await asyncio.sleep(2)
 
-        # === 摄梦人技能统一结算 ===
-        try:
-            from roles import apply_dreamer_logic
-            apply_dreamer_logic(self)
-        except Exception as e:
-            logger.error(f"摄梦人结算失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+        # 结算摄梦人逻辑
+        apply_dreamer_logic(self)
 
-        # 检查结果
-        self.check_result()
-
-    async def sheriff_election(self):
-        """完整上警竞选环节"""
-        # 1. 上警阶段（10秒）
-        await self.sheriff_phase()
-        
-        # 2. 竞选发言阶段
-        sheriff_candidates = [
-            user.nick for user in self.list_alive_players()
-            if user.skill.get('sheriff_vote') == '上警'
-        ]
-        
-        if not sheriff_candidates:
-            self.broadcast_msg('无人上警，进入白天投票阶段', tts=True)
-            self.stage = GameStage.Day
-            return
-        
-        # 随机选第一个发言玩家
-        random.shuffle(sheriff_candidates)
-        first_speaker = sheriff_candidates.pop(0)
-        
-        # 随机顺序/逆序
-        speech_order = random.choice(['顺序', '逆序'])
-        if speech_order == '逆序':
-            sheriff_candidates.reverse()
-        
-        # 排序显示
-        full_list = [first_speaker] + sheriff_candidates
-        full_list.sort()
-        
-        # 公布发言顺序
-        self.broadcast_msg(
-            f'上警玩家：{"".join([f"【{nick}】" for nick in full_list])}，'
-            f'请【{first_speaker}】先发言，{speech_order}发言顺序。',
-            tts=True
-        )
-        
-        # 设置发言阶段
-        self.stage = 'SPEECH'
-        self.sheriff_speakers = full_list
-        self.sheriff_speaker_index = 0
-        
-        # 逐个发言
-        for speaker in full_list:
-            self.broadcast_msg(f'请【{speaker}】发言（30秒）', tts=True)
-            self.current_speaker = speaker
-            await self.speech_timer(30)
-            self.sheriff_speaker_index += 1
-            await asyncio.sleep(2)
-        
-        # 清空
-        self.sheriff_speakers = None
-        self.sheriff_speaker_index = 0
-        self.current_speaker = None
-        
-        # 进入投票
-        self.stage = GameStage.Day
-        self.broadcast_msg('竞选发言结束，准备投票', tts=True)
-
-    async def sheriff_phase(self):
-        """上警阶段"""
-        self.broadcast_msg('天亮了，上警的玩家请举手（10秒）', tts=True)
-        self.stage = GameStage.SHERIFF
-        self.waiting = True
-
-        async def countdown():
-            for i in range(10, 0, -1):
-                if not self.waiting:
-                    break
-                self.broadcast_msg(f'上警倒计时：{i}秒', tts=False)
-                await asyncio.sleep(1)
-            self.waiting = False
-            self.broadcast_log_ctrl(LogCtrl.RemoveInput)
-
-        asyncio.create_task(countdown())
-        await self.wait_for_player()
-
-    async def speech_timer(self, seconds: int):
-        """单个玩家发言计时器"""
-        self.waiting = True
-        async def countdown():
-            for i in range(seconds, 0, -1):
-                if not self.waiting:
-                    break
-                await asyncio.sleep(1)
-            self.waiting = False
-            self.broadcast_log_ctrl(LogCtrl.RemoveInput)
-
-        asyncio.create_task(countdown())
-        await self.wait_for_player()
-
-    def check_result(self, is_vote_check=False):
-        """检查夜晚/投票结果，判断胜负，并触发猎人/狼王开枪"""
-        out_result = []
-        can_shoot_deaths = []  # 新增：记录能开枪的死亡玩家
-
-        for nick, user in self.players.items():
-            # === 梦游免疫 ===
-            if user.skill.get('dream_immunity'):
-                user.skill.pop('dream_immunity')
-                if user.status in (PlayerStatus.PENDING_DEAD, PlayerStatus.PENDING_POISON):
-                    user.status = PlayerStatus.ALIVE
-                    continue
-
-            # === 女巫毒杀：死亡 + 不能开枪 ===
-            if user.status == PlayerStatus.PENDING_POISON:
-                user.status = PlayerStatus.DEAD
-                out_result.append(nick)
-                if user.role in (Role.HUNTER, Role.WOLF_KING):
-                    user.skill['can_shoot'] = False  # 毒杀无法开枪
+        # 结算夜晚死亡
+        dead_this_night = []
+        for u in self.players.values():
+            if u.status == PlayerStatus.DEAD:
                 continue
+            immunity = u.skill.get('dream_immunity', False)
+            u.skill['dream_immunity'] = False  # 重置免疫
 
-            # === 守卫/解药救活 ===
-            if user.status in [PlayerStatus.PENDING_HEAL, PlayerStatus.PENDING_GUARD]:
-                user.status = PlayerStatus.ALIVE
-                continue
-
-            # === 狼刀死亡：可能能开枪 ===
-            if user.status == PlayerStatus.PENDING_DEAD:
-                user.status = PlayerStatus.DEAD
-                out_result.append(nick)
-                # 只有被狼刀死，且 can_shoot 为 True，才能开枪
-                if user.role in (Role.HUNTER, Role.WOLF_KING) and user.skill.get('can_shoot', True):
-                    can_shoot_deaths.append(user)
-                continue
-
-            # === 其他情况：活着 ===
-            user.status = PlayerStatus.ALIVE
-
-            # === 统计存活阵营 ===
-            if user.status == PlayerStatus.ALIVE:
-                if user.role in [Role.WOLF, Role.WOLF_KING]:
-                    wolf_team.append(1)
-                elif user.role == Role.CITIZEN:
-                    citizen_team.append(1)
+            if u.status == PlayerStatus.PENDING_POISON:
+                if immunity:
+                    u.status = PlayerStatus.ALIVE
                 else:
-                    god_team.append(1)
+                    u.status = PlayerStatus.DEAD
+                    dead_this_night.append(u.nick)
+                    if u.role in (Role.HUNTER, Role.WOLF_KING):
+                        u.skill['can_shoot'] = False
+            elif u.status == PlayerStatus.PENDING_DEAD:
+                if immunity or u.status == PlayerStatus.PENDING_HEAL or u.status == PlayerStatus.PENDING_GUARD:
+                    u.status = PlayerStatus.ALIVE
+                else:
+                    u.status = PlayerStatus.DEAD
+                    dead_this_night.append(u.nick)
+                    # 假设被刀杀的猎人/狼王可以开枪，不设置 can_shoot = False
+            elif u.status in (PlayerStatus.PENDING_HEAL, PlayerStatus.PENDING_GUARD):
+                u.status = PlayerStatus.ALIVE
+            else:
+                u.status = PlayerStatus.ALIVE
 
-        # 保存死亡名单
-        self.death_pending = out_result
+        self.death_pending = dead_this_night
 
-        # === 胜负判断 ===
-        if not wolf_team:
-            self.stop_game('好人胜利')
-            return
+        # 天亮
+        self.broadcast_msg('天亮请睁眼', tts=True)
+        await asyncio.sleep(2)
 
-        if not citizen_team or (not self.is_no_god() and not god_team):
-            self.stop_game('狼人胜利')
-            return
+        # 设置白天阶段（房主可以看到公布死亡按钮）
+        self.stage = GameStage.Day
 
-        # === 夜晚流程：有能开枪的死亡玩家 → 触发开枪阶段 ===
-        if not is_vote_check and can_shoot_deaths:
-            self.pending_shooters = can_shoot_deaths  # 临时保存
-            asyncio.create_task(self.trigger_shoot_phase())
-            return  # 重要：不要直接进警长选举，要先开枪！
-
-        # === 正常进入警长选举（或白天）===
-        if not is_vote_check:
-            asyncio.create_task(self.sheriff_election())
-
-    async def vote_kill(self, nick):
-        self.players[nick].status = PlayerStatus.DEAD
-        self.check_result(is_vote_check=True)
-        if self.started:
-            self.enter_null_stage()
-            await self.start_game()
+        # 如果是第一天，切换到 SHERIFF
+        if self.round == 1:
+            self.stage = GameStage.SHERIFF
+            self.broadcast_msg('进行警上竞选', tts=True)
 
     async def wait_for_player(self):
-        """等待玩家操作"""
+        """等待玩家行动完成"""
+        timeout = 60  # 示例超时时间
+        start_time = asyncio.get_event_loop().time()
         while self.waiting:
+            if asyncio.get_event_loop().time() - start_time > timeout:
+                self.waiting = False
+                self.broadcast_msg("行动超时，系统自动跳过", tts=True)
+                break
             await asyncio.sleep(0.1)
-        self.broadcast_log_ctrl(LogCtrl.RemoveInput)
 
-    def enter_null_stage(self):
-        """清空当前阶段"""
-        self.stage = None
-
-    async def start_game(self):
-        """开始游戏或进入下一夜"""
-        if not self.started:
-            if len(self.players) != len(self.roles):
-                self.broadcast_msg('人数不足，无法开始游戏')
-                return
-
-            self.started = True
-            self.broadcast_msg('游戏开始，请查看你的身份', tts=True)
-            random.shuffle(self.roles_pool)
-            for nick in self.players:
-                user = self.players[nick]
-                user.role = self.roles_pool.pop()
-                user.status = PlayerStatus.ALIVE
-
-                # 初始化技能
-                if user.role == Role.WITCH:
-                    user.skill['poison'] = True
-                    user.skill['heal'] = True
-                if user.role == Role.GUARD:
-                    user.skill['last_protect'] = None
-                if user.role == Role.DREAMER:
-                    user.skill.update({
-                        'last_dream_target': None,
-                        'curr_dream_target': None,
-                        'dreamer_nick': None,
-                    })
-
-                user.send_msg(f'你的身份是 "{user.role}"')
-
-            await asyncio.sleep(5)
-
-        self.logic_thread = asyncio.create_task(self.night_logic())
-
-    def stop_game(self, reason=''):
-        """结束游戏"""
-        self.started = False
-        self.roles_pool = copy(self.roles)
-        self.round = 0
-        self.enter_null_stage()
-        self.waiting = False
-
-        self.broadcast_msg(f'游戏结束，{reason}。', tts=True)
-        for nick, user in self.players.items():
-            self.broadcast_msg(f'{nick}：{user.role} ({user.status})')
-            user.role = None
-            user.status = None
-            user.skill.clear()
-
-    def list_alive_players(self) -> list:
-        return [user for user in self.players.values() if user.status != PlayerStatus.DEAD]
-
-    def list_pending_kill_players(self) -> list:
-        return [user for user in self.players.values() if user.status == PlayerStatus.PENDING_DEAD]
+    def list_alive_players(self) -> List[User]:
+        return [u for u in self.players.values() if u.status == PlayerStatus.ALIVE]
 
     def is_full(self) -> bool:
         return len(self.players) >= len(self.roles)
@@ -430,6 +381,13 @@ class Room:
         """房间描述"""
         return f'房间号 {self.id}，需要玩家 {len(self.roles)} 人，人员配置：{dict(Counter(self.roles))}'
 
+    async def vote_kill(self, nick: str):
+        player = self.players.get(nick)
+        if player:
+            player.status = PlayerStatus.DEAD
+            self.broadcast_msg(f"{nick} 被投票出局", tts=True)
+            # Handle hunter/wolf king shoot if applicable
+            
     @classmethod
     def get(cls, room_id) -> Optional['Room']:
         """获取房间"""
