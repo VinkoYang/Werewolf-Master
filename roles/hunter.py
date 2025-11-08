@@ -12,6 +12,13 @@ class Hunter(RoleBase):
     def should_act(self) -> bool:
         room = self.user.room
         return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.HUNTER
+        
+    def get_actions(self):
+            if self.user.room.stage == GameStage.HUNTER and self.user.skill.get('can_shoot', False):
+                return [
+                    actions(name='hunter_confirm', buttons=['开枪'], help_text='猎人开枪')
+                ]
+            return []
 
     @player_action
     def gun_status(self) -> Optional[str]:
@@ -19,3 +26,4 @@ class Hunter(RoleBase):
         status = "可以开枪" if can else "无法开枪"
         self.user.send_msg(f'🔫 你的开枪状态：{status}')
         return True
+        

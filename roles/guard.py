@@ -1,5 +1,7 @@
 # roles/guard.py
-from typing import Optional
+from typing import Optional, List
+from pywebio.input import actions
+from utils import add_cancel_button
 from .base import RoleBase, player_action
 from enums import PlayerStatus, GameStage, GuardRule
 
@@ -7,14 +9,29 @@ class Guard(RoleBase):
     name = '守卫'
     team = '好人阵营'
     can_act_at_night = True
-    can_act_at_day = False
 
     def should_act(self) -> bool:
         room = self.user.room
-        return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.GUARD
+        return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.GUARD and not self.user.skill.get('acted_this_stage', False)
+
+    def get_actions(self) -> List:
+        if not self.should_act():
+            return []
+        room = self.user.room
+        last = self.user.skill.get('last_protect')
+        buttons = [f"{u.seat}. {u.nick}" for u in room.list_alive_players() if u.nick != last]
+        return [
+            actions(
+                name='guard_team_op',
+                buttons=add_cancel_button(buttons),
+                help_text='守卫，请选择守护对象（不能连续守护同一人）。'
+            )
+        ]
 
     @player_action
     def protect_player(self, nick: str) -> Optional[str]:
+        if nick == '取消':
+            return None
         if self.user.skill.get('last_protect') == nick:
             return '两晚不可守卫同一玩家'
 
@@ -31,4 +48,5 @@ class Guard(RoleBase):
 
         target.status = PlayerStatus.PENDING_GUARD
         self.user.skill['last_protect'] = nick
+        self.user.skill['acted_this_stage'] = True
         return True

@@ -8,7 +8,9 @@ from logging import getLogger, basicConfig
 from pywebio import start_server
 from pywebio.input import *
 from pywebio.output import *
+from pywebio.output import use_scope
 from pywebio.session import defer_call, get_current_task_id
+
 
 from enums import WitchRule, GuardRule, Role, GameStage, PlayerStatus
 from models.room import Room
@@ -79,91 +81,17 @@ async def main():
                 host_ops += [
                     actions(
                         name='host_vote_op',
-                        buttons=[user.nick for user in room.list_alive_players()],
+                        buttons=[f"{user.seat}. {user.nick}" for user in room.list_alive_players()],  # 添加座位号
                         help_text='你是房主，本轮需要选择出局玩家'
                     )
                 ]
 
-        # === 房主专属关闭服务器按钮 ===
-        if current_user is room.get_host():
-            host_ops += [
-                actions(
-                    name='shutdown_server',
-                    buttons=['[房主] 结束游戏并关闭服务器'],
-                    help_text='点击后所有玩家断开，服务器关闭'
-                )
-            ]
 
         # 玩家操作
         user_ops = []
-        if room.started:
-            # === 狼人阶段 ===
-            if room.stage == GameStage.WOLF and current_user.role_instance.should_act():
-                user_ops += [
-                    actions(
-                        name='wolf_team_op',
-                        buttons=add_cancel_button([f"{u.seat}. {u.nick}" for u in room.list_alive_players()]),
-                        help_text='狼人，请选择要击杀的对象。'
-                    )
-                ]
-
-            # === 预言家阶段 ===
-            if room.stage == GameStage.SEER and current_user.role_instance.should_act():
-                user_ops += [
-                    actions(
-                        name='seer_team_op',
-                        buttons=[f"{u.seat}. {u.nick}" for u in room.list_alive_players()],  # 可以查自己
-                        help_text='预言家，请选择要查验的对象。'
-                    )
-                ]
-
-            # === 女巫阶段 ===
-            if room.stage == GameStage.WITCH and current_user.role_instance.should_act():
-                if current_user.role_instance.has_heal():
-                    pending_nicks = ', '.join([u.nick for u in room.list_pending_kill_players()])
-                    current_user.send_msg(f'昨晚被杀的是 {pending_nicks}')
-                else:
-                    current_user.send_msg('你已经没有解药了')
-
-                user_ops += [
-                    radio(name='witch_mode', options=['解药', '毒药'], required=True, inline=True),
-                    actions(
-                        name='witch_team_op',
-                        buttons=add_cancel_button([f"{u.seat}. {u.nick}" for u in room.list_alive_players()]),
-                        help_text='女巫，请选择你的操作。'
-                    )
-                ]
-
-            # === 守卫阶段 ===
-            if room.stage == GameStage.GUARD and current_user.role_instance.should_act():
-                user_ops += [
-                    actions(
-                        name='guard_team_op',
-                        buttons=add_cancel_button([f"{u.seat}. {u.nick}" for u in room.list_alive_players()]),
-                        help_text='守卫，请选择要守护的对象。'
-                    )
-                ]
-
-            # === 摄梦人阶段 ===
-            if room.stage == GameStage.DREAMER and current_user.role_instance.should_act():
-                user_ops += [
-                    actions(
-                        name='dreamer_team_op',
-                        buttons=add_cancel_button([f"{u.seat}. {u.nick}" for u in room.list_alive_players() if u.nick != current_user.nick]),
-                        help_text='摄梦人，请选择今晚的梦游者（未选系统随机）'
-                    )
-                ]
-
-            # === 猎人阶段 ===
-            if room.stage == GameStage.HUNTER and current_user.role_instance.should_act():
-                current_user.role_instance.gun_status()
-                user_ops += [
-                    actions(
-                        name='hunter_confirm',
-                        buttons=['确认'],
-                        help_text='猎人，请点击确认继续'
-                    )
-                ]
+        if room.started and current_user.role_instance:
+            user_ops = current_user.role_instance.get_actions()
+        
 
             # === 上警阶段：10秒举手 ===
             if room.stage == GameStage.SHERIFF and current_user.status == PlayerStatus.ALIVE:
@@ -202,8 +130,9 @@ async def main():
 
         if ops:
             current_user.input_blocking = True
-        data = await input_group('操作', inputs=ops, cancelable=True)
-        current_user.input_blocking = False
+            with use_scope('input_group', clear=True):  # 替换 clear('input_group')
+                data = await input_group('操作', inputs=ops, cancelable=True)
+            current_user.input_blocking = False
 
         if data is None:
             current_user.skip()
@@ -215,7 +144,7 @@ async def main():
         if data.get('host_vote_op'):
             voted_nick = data.get('host_vote_op').split('.')[-1].strip()
             await room.vote_kill(voted_nick)
-            voted_out = room.players.get(data.get('host_vote_op'))
+            voted_out = room.players.get(voted_nick)  # 修改为 voted_nick
             if voted_out and voted_out.role == Role.HUNTER and voted_out.skill.get('can_shoot', False):
                 voted_out.send_msg('🔫 你是猎人，可以立即开枪！')
                 # 这里可以添加猎人开枪按钮逻辑

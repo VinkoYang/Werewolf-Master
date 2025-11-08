@@ -15,8 +15,7 @@ from . import logger
 
 if TYPE_CHECKING:
     from .room import Room
-    from roles.base import RoleBase   # 引入角色基类
-
+    from roles.base import RoleBase
 
 @dataclass
 class User:
@@ -26,7 +25,7 @@ class User:
 
     room: Optional['Room'] = None
     role: Optional[Role] = None
-    role_instance: Optional['RoleBase'] = None   # 具体角色实例
+    role_instance: Optional['RoleBase'] = None
     skill: dict = None
     status: Optional[PlayerStatus] = None
     seat: Optional[int] = None
@@ -46,17 +45,12 @@ class User:
                 'curr_dream_target': None,
                 'dreamer_nick': None,
                 'sheriff_vote': None,
+                'acted_this_stage': False,  # 必须初始化
             }
         if self.game_msg is None:
             self.game_msg = output()
 
-    def __str__(self):
-        return self.nick
-
-    __repr__ = __str__
-
     def send_msg(self, text: str):
-        """私聊消息"""
         if self.room:
             self.room.send_msg(text, nick=self.nick)
         else:
@@ -65,39 +59,32 @@ class User:
     async def _game_msg_syncer(self):
         last_idx = len(self.room.log) if self.room else 0
         while True:
-            if not self.room:
-                break
+            if not self.room: break
             for msg in self.room.log[last_idx:]:
                 if msg[0] == self.nick:
                     self.game_msg.append(f'Private: {msg[1]}')
                 elif msg[0] == Config.SYS_NICK:
                     self.game_msg.append(f'Public: {msg[1]}')
-                elif msg[0] is None:
-                    if msg[1] == LogCtrl.RemoveInput and self.input_blocking:
-                        get_current_session().send_client_event({
-                            'event': 'from_cancel',
-                            'task_id': self.main_task_id,
-                            'data': None
-                        })
+                elif msg[0] is None and msg[1] == LogCtrl.RemoveInput and self.input_blocking:
+                    get_current_session().send_client_event({
+                        'event': 'from_cancel',
+                        'task_id': self.main_task_id,
+                        'data': None
+                    })
             if len(self.room.log) > 50000:
-                self.room.log = self.room.log[len(self.room.log) // 2:]
+                self.room.log = self.room.log[len(self.room.log)//2:]
             last_idx = len(self.room.log)
             await asyncio.sleep(0.2)
 
     def start_syncer(self):
-        if self.game_msg_syncer is not None:
-            raise AssertionError
+        if self.game_msg_syncer: raise AssertionError
         self.game_msg_syncer = run_async(self._game_msg_syncer())
 
     def stop_syncer(self):
-        if self.game_msg_syncer is None or self.game_msg_syncer.closed():
-            raise AssertionError
+        if not self.game_msg_syncer or self.game_msg_syncer.closed(): raise AssertionError
         self.game_msg_syncer.close()
         self.game_msg_syncer = None
 
-    # ------------------------------------------------------------------
-    # 统一的 skip（交给角色实例处理）
-    # ------------------------------------------------------------------
     def skip(self):
         if self.role_instance:
             self.role_instance.skip()
@@ -109,21 +96,8 @@ class User:
 
     @classmethod
     def alloc(cls, nick, init_task_id) -> 'User':
-        if nick in Global.users:
-            raise ValueError("用户已存在")
-
-        user = cls(
-            nick=nick,
-            main_task_id=init_task_id,
-            input_blocking=False,
-            room=None,
-            role=None,
-            role_instance=None,
-            skill=None,
-            status=None,
-            game_msg=None,
-            game_msg_syncer=None
-        )
+        if nick in Global.users: raise ValueError("用户已存在")
+        user = cls(nick=nick, main_task_id=init_task_id)
         Global.users[nick] = user
         logger.info(f'用户 "{nick}" 登录')
         return user

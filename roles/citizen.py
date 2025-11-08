@@ -10,3 +10,5 @@ class Citizen(RoleBase):
 
     def should_act(self) -> bool:
         return False  # 平民无夜晚技能
+        
+    def get_actions(self): return []

@@ -1,28 +1,46 @@
 # roles/wolf.py
-from typing import Optional
+from typing import List, Optional
+from pywebio.input import actions
+from utils import add_cancel_button
 from .base import RoleBase, player_action
-from enums import PlayerStatus, GameStage
+from enums import GameStage, PlayerStatus
 
 class Wolf(RoleBase):
     name = '狼人'
     team = '狼人阵营'
     can_act_at_night = True
-    can_act_at_day = False
 
     def should_act(self) -> bool:
         room = self.user.room
-        return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.WOLF
+        return (
+            self.user.status != PlayerStatus.DEAD and
+            room.stage == GameStage.WOLF and
+            not self.user.skill.get('acted_this_stage', False)
+        )
+
+    def get_actions(self) -> List:
+        if not self.should_act():
+            return []
+
+        room = self.user.room
+        alive_players = room.list_alive_players()
+        buttons = [f"{u.seat}. {u.nick}" for u in alive_players if u.nick != self.user.nick]
+
+        return [
+            actions(
+                name='wolf_team_op',
+                buttons=add_cancel_button(buttons),
+                help_text='狼人，请选择要击杀的对象。'
+            )
+        ]
 
     @player_action
     def kill_player(self, nick: str) -> Optional[str]:
         if nick == '取消':
             return None
-        target_nick = nick.split('.')[-1].strip()
-        if target_nick == self.user.nick:
-            return '不能击杀自己'
-        target = self.user.room.players.get(target_nick)
-        if not target or target.status == PlayerStatus.DEAD:
-            return '目标已死亡'
-        target.status = PlayerStatus.PENDING_DEAD
-        self.user.send_msg(f'你选择了击杀 {target_nick}')
+
+        self.user.skill['acted_this_stage'] = True
+
+        room = self.user.room
+        room.skill.setdefault('wolf_kill', set()).add(nick)
         return True
