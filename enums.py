@@ -1,3 +1,4 @@
+# enums.py
 from enum import Enum
 from typing import Union
 
@@ -8,10 +9,8 @@ class LogCtrl(Enum):
 
 
 class PlainEnum(Enum):
-
     def __repr__(self):
         return self.value
-
     __str__ = __repr__
 
 
@@ -27,20 +26,24 @@ class PlayerStatus(PlainEnum):
 class GameStage(Enum):
     Day = 'Day'
     WOLF = '狼人'
-    DETECTIVE = '预言家'
+    SEER = '预言家'
     WITCH = '女巫'
     GUARD = '守卫'
     HUNTER = '猎人'
+    DREAMER = '摄梦人'          # 新增：摄梦人阶段
+    SHERIFF = '上警'           # 新增：上警阶段
+    SPEECH = '发言'            # 新增：竞选发言阶段
 
 
 class Role(PlainEnum):
-    WOLF = '狼人'  # 狼人
-    WOLF_KING = '狼王'  # 狼王
-    DETECTIVE = '预言家'  # 预言家
-    WITCH = '女巫'  # 女巫
-    GUARD = '守卫'  # 守卫
-    HUNTER = '猎人'  # 猎人
-    CITIZEN = '平民'  # 平民
+    WOLF = '狼人'
+    WOLF_KING = '狼王'
+    SEER = '预言家'
+    WITCH = '女巫'
+    GUARD = '守卫'
+    HUNTER = '猎人'
+    CITIZEN = '平民'
+    DREAMER = '摄梦人'          # 新增：摄梦人角色
 
     @classmethod
     def as_god_citizen_options(cls) -> list:
@@ -75,10 +78,11 @@ class Role(PlainEnum):
     @classmethod
     def god_citizen_mapping(cls) -> dict:
         return {
-            '预言家': cls.DETECTIVE,
+            '预言家': cls.SEER,
             '女巫': cls.WITCH,
             '守卫': cls.GUARD,
             '猎人': cls.HUNTER,
+            '摄梦人': cls.DREAMER,   # 新增
         }
 
     @classmethod
@@ -86,6 +90,7 @@ class Role(PlainEnum):
         return dict(**cls.normal_mapping(), **cls.god_wolf_mapping(), **cls.god_citizen_mapping())
 
 
+# === 女巫规则 ===
 class WitchRule(Enum):
     SELF_RESCUE_FIRST_NIGHT_ONLY = '仅第一夜可自救'
     NO_SELF_RESCUE = '不可自救'
@@ -113,6 +118,7 @@ class WitchRule(Enum):
         }
 
 
+# === 守卫规则 ===
 class GuardRule(Enum):
     MED_CONFLICT = '同时被守被救时，对象死亡'
     NO_MED_CONFLICT = '同时被守被救时，对象存活'
