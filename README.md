@@ -197,8 +197,33 @@ system.Global：静态方法如reg_room(room)（分配ID）、get_room(id)。
 enums：提供mapping()和from_option()，用于配置解析（如main的input_group → Role.from_option）。
 
 --
-Update
-- User类添加seat属性，在add_player时分配序号如len(self.players)+1
+#Update
+## v0.6:
+User类添加seat属性，在add_player时分配序号如len(self.players)+1
+
+-通用玩家脚本：保留 user.py 中的 User 类作为通用玩家实体。它包含玩家的基本属性（如昵称、房间、状态、技能字典等），以及通用方法（如 send_msg、skip）。User 现在持有两个与角色相关的属性：
+role: 仍然是 enums.Role 枚举值（用于快速检查角色类型）。
+role_instance: 一个具体角色类的实例（继承自基类 RoleBase），负责处理该角色的特定技能和逻辑。
+
+- 各个有技能玩家的单独脚本：引入一个新目录 roles/，其中：
+base.py：定义基类 RoleBase，包含角色通用的方法（如 should_act、activate_skill 等）。所有角色类都继承自它。
+每个具体角色有一个单独的文件（如 wolf.py、seer.py 等），定义该角色的类（e.g., class Wolf(RoleBase)）。角色特定的技能方法（如狼人的 kill_player、预言家的 identify_player 等）都移到这些类中。
+平民（Citizen）和无技能角色也用一个简单类实现（继承基类，但技能方法为空或简单实现）。
+
+- 技能集中管理：所有与角色相关的技能逻辑都移到对应的角色类中。添加/删除角色只需：
+在 roles/ 目录下添加/删除文件和类。
+在 enums.py 的 Role 枚举中添加/删除值。
+在 room.py 的角色分配逻辑中更新角色类映射（role_classes 字典）。
+
+其他调整：
+room.py 中的游戏逻辑（如夜晚阶段）现在通过 user.role_instance 调用具体技能。
+main.py 中的输入处理逻辑调整为调用 user.role_instance 的方法。
+移除了 user.py 中的具体技能方法（如 wolf_kill_player），改为委托给 role_instance。
+装饰器 player_action 移到 roles/base.py 中，作为角色方法的装饰器。
+摄梦人逻辑（原 apply_dreamer_logic）移到 roles/dreamer.py 的类方法中。
+保持原有文件结构，但新增 roles/ 目录。
+
+- 兼容性：重构后，代码功能保持不变，但更模块化。添加新角色（如“白痴”）只需创建 roles/idiot.py，定义类，实现技能，然后在映射中注册。
 
 
     
