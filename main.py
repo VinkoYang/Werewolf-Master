@@ -98,7 +98,7 @@ async def main():
         user_ops = []
         if room.started:
             # === 狼人阶段 ===
-            if room.stage == GameStage.WOLF and current_user.should_act():
+            if room.stage == GameStage.WOLF and current_user.role_instance.should_act():
                 user_ops += [
                     actions(
                         name='wolf_team_op',
@@ -108,7 +108,7 @@ async def main():
                 ]
 
             # === 预言家阶段 ===
-            if room.stage == GameStage.SEER and current_user.should_act():
+            if room.stage == GameStage.SEER and current_user.role_instance.should_act():
                 user_ops += [
                     actions(
                         name='seer_team_op',
@@ -118,8 +118,8 @@ async def main():
                 ]
 
             # === 女巫阶段 ===
-            if room.stage == GameStage.WITCH and current_user.should_act():
-                if current_user.witch_has_heal():
+            if room.stage == GameStage.WITCH and current_user.role_instance.should_act():
+                if current_user.role_instance.has_heal():
                     pending_nicks = ', '.join([u.nick for u in room.list_pending_kill_players()])
                     current_user.send_msg(f'昨晚被杀的是 {pending_nicks}')
                 else:
@@ -135,7 +135,7 @@ async def main():
                 ]
 
             # === 守卫阶段 ===
-            if room.stage == GameStage.GUARD and current_user.should_act():
+            if room.stage == GameStage.GUARD and current_user.role_instance.should_act():
                 user_ops += [
                     actions(
                         name='guard_team_op',
@@ -145,7 +145,7 @@ async def main():
                 ]
 
             # === 摄梦人阶段 ===
-            if room.stage == GameStage.DREAMER and current_user.should_act():
+            if room.stage == GameStage.DREAMER and current_user.role_instance.should_act():
                 user_ops += [
                     actions(
                         name='dreamer_team_op',
@@ -154,16 +154,16 @@ async def main():
                     )
                 ]
 
-#            # === 猎人阶段：查看开枪状态 + 确认按钮 ===
-#            if room.stage == GameStage.HUNTER and current_user.should_act():
-#                current_user.hunter_gun_status()
-#                user_ops += [
-#                    actions(
-#                        name='hunter_confirm',
-#                        buttons=['确认'],
-#                        help_text='猎人，请点击确认继续'
-#                    )
-#                ]
+            # === 猎人阶段 ===
+            if room.stage == GameStage.HUNTER and current_user.role_instance.should_act():
+                current_user.role_instance.gun_status()
+                user_ops += [
+                    actions(
+                        name='hunter_confirm',
+                        buttons=['确认'],
+                        help_text='猎人，请点击确认继续'
+                    )
+                ]
 
             # === 上警阶段：10秒举手 ===
             if room.stage == GameStage.SHERIFF and current_user.status == PlayerStatus.ALIVE:
@@ -214,30 +214,29 @@ async def main():
             await room.start_game()
         if data.get('host_vote_op'):
             voted_nick = data.get('host_vote_op').split('.')[-1].strip()
-            await room.vote_kill(voted_nick)  # But wait, vote_kill doesn't exist—fix below
-            # 🔥 新增：检查是否猎人被投出，可以立即开枪
+            await room.vote_kill(voted_nick)
             voted_out = room.players.get(data.get('host_vote_op'))
             if voted_out and voted_out.role == Role.HUNTER and voted_out.skill.get('can_shoot', False):
                 voted_out.send_msg('🔫 你是猎人，可以立即开枪！')
                 # 这里可以添加猎人开枪按钮逻辑
 
-        # === 夜晚行动处理 ===
+        # === 夜晚行动处理（调用 role_instance） ===
         if data.get('wolf_team_op'):
-            current_user.wolf_kill_player(nick=data.get('wolf_team_op'))
+            current_user.role_instance.kill_player(data.get('wolf_team_op'))
         if data.get('seer_team_op'):
-            current_user.seer_identify_player(nick=data.get('seer_team_op'))
+            current_user.role_instance.identify_player(data.get('seer_team_op'))
         if data.get('witch_team_op'):
             mode = data.get('witch_mode')
             if mode == '解药':
-                current_user.witch_heal_player(nick=data.get('witch_team_op'))
+                current_user.role_instance.heal_player(data.get('witch_team_op'))
             elif mode == '毒药':
-                current_user.witch_kill_player(nick=data.get('witch_team_op'))
+                current_user.role_instance.kill_player(data.get('witch_team_op'))
         if data.get('guard_team_op'):
-            current_user.guard_protect_player(nick=data.get('guard_team_op'))
+            current_user.role_instance.protect_player(data.get('guard_team_op'))
         if data.get('dreamer_team_op'):
-            current_user.dreamer_select(nick=data.get('dreamer_team_op'))
-        #if data.get('hunter_confirm'):
-            #current_user.skip()  # 猎人确认
+            current_user.role_instance.select_target(data.get('dreamer_team_op'))
+        if data.get('hunter_confirm'):
+            current_user.skip()
 
         # === 上警与发言 ===
         if data.get('sheriff_vote'):

@@ -2,18 +2,18 @@
 from enum import Enum
 from typing import Union
 
-
+# 广播控制类（目前只有一个值：移除输入框）
 class LogCtrl(Enum):
     """广播目标为 None 的，特殊控制消息类型枚举"""
     RemoveInput = '移除当前输入框'
 
-
+# 对 Enum 做了一个小封装，使 __repr__/__str__ 直接返回枚举的 value（便于打印中文）。
 class PlainEnum(Enum):
     def __repr__(self):
         return self.value
     __str__ = __repr__
 
-
+# 玩家状态的枚举（存活/出局/被毒/被救/被守等中间态）。
 class PlayerStatus(PlainEnum):
     ALIVE = '存活'
     DEAD = '出局'
@@ -22,7 +22,7 @@ class PlayerStatus(PlainEnum):
     PENDING_POISON = '被女巫毒害'
     PENDING_GUARD = '被守卫守护'
 
-
+# 游戏阶段（白天、狼人、预言家、女巫、守卫、猎人、摄梦人、上警、竞选发言）
 class GameStage(Enum):
     Day = 'Day'
     WOLF = '狼人'
@@ -30,11 +30,12 @@ class GameStage(Enum):
     WITCH = '女巫'
     GUARD = '守卫'
     HUNTER = '猎人'
-    DREAMER = '摄梦人'          # 新增：摄梦人阶段
-    SHERIFF = '上警'           # 新增：上警阶段
-    SPEECH = '发言'            # 新增：竞选发言阶段
+    DREAMER = '摄梦人'          # 摄梦人阶段
+    SHERIFF = '上警'           # 上警阶段
+    SPEECH = '发言'            # 竞选发言阶段
 
 
+# 玩家角色
 class Role(PlainEnum):
     WOLF = '狼人'
     WOLF_KING = '狼王'
@@ -43,7 +44,8 @@ class Role(PlainEnum):
     GUARD = '守卫'
     HUNTER = '猎人'
     CITIZEN = '平民'
-    DREAMER = '摄梦人'          # 新增：摄梦人角色
+    DREAMER = '摄梦人'
+    IDIOT = '白痴'
 
     @classmethod
     def as_god_citizen_options(cls) -> list:

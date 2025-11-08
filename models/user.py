@@ -8,35 +8,14 @@ from pywebio.output import output
 from pywebio.session import get_current_session
 from pywebio.session.coroutinebased import TaskHandle
 
-from enums import Role, PlayerStatus, LogCtrl, WitchRule, GuardRule, GameStage
+from enums import Role, PlayerStatus, LogCtrl
 from models.system import Config, Global
 from stub import OutputHandler
 from . import logger
 
 if TYPE_CHECKING:
     from .room import Room
-
-
-def player_action(func):
-    """
-    玩家操作等待解锁逻辑装饰器
-    """
-    def wrapper(self: 'User', *args, **kwargs):
-        if self.room is None or self.room.waiting is not True:
-            return
-        if not self.should_act():
-            return
-
-        rv = func(self, *args, **kwargs)
-        if rv in [None, True]:
-            self.room.waiting = False
-            #self.room.enter_null_stage()
-        if isinstance(rv, str):
-            self.send_msg(text=rv)
-
-        return rv
-
-    return wrapper
+    from roles.base import RoleBase   # 引入角色基类
 
 
 @dataclass
@@ -47,9 +26,10 @@ class User:
 
     room: Optional['Room'] = None
     role: Optional[Role] = None
+    role_instance: Optional['RoleBase'] = None   # 具体角色实例
     skill: dict = None
     status: Optional[PlayerStatus] = None
-    seat: Optional[int] = None  # Add this
+    seat: Optional[int] = None
 
     game_msg: OutputHandler = None
     game_msg_syncer: Optional[TaskHandle] = None
@@ -75,7 +55,8 @@ class User:
 
     __repr__ = __str__
 
-    def send_msg(self, text):
+    def send_msg(self, text: str):
+        """私聊消息"""
         if self.room:
             self.room.send_msg(text, nick=self.nick)
         else:
@@ -98,7 +79,6 @@ class User:
                             'task_id': self.main_task_id,
                             'data': None
                         })
-
             if len(self.room.log) > 50000:
                 self.room.log = self.room.log[len(self.room.log) // 2:]
             last_idx = len(self.room.log)
@@ -115,124 +95,12 @@ class User:
         self.game_msg_syncer.close()
         self.game_msg_syncer = None
 
-    def should_act(self):
-        stage_map = {
-            GameStage.Day: [],
-            GameStage.GUARD: [Role.GUARD],
-            GameStage.WITCH: [Role.WITCH],
-            GameStage.HUNTER: [Role.HUNTER],
-            GameStage.SEER: [Role.SEER],
-            GameStage.WOLF: [Role.WOLF, Role.WOLF_KING],
-            GameStage.DREAMER: [Role.DREAMER],
-            # ... (assuming other stages if needed)
-        }
-        return self.status != PlayerStatus.DEAD and self.role in stage_map.get(self.room.stage, [])
-
-    def witch_has_heal(self) -> bool:
-        return self.skill.get('heal', False)
-
-    def witch_has_poison(self) -> bool:
-        return self.skill.get('poison', False)
-
-    @player_action
+    # ------------------------------------------------------------------
+    # 统一的 skip（交给角色实例处理）
+    # ------------------------------------------------------------------
     def skip(self):
-        pass
-
-
-    @player_action
-    def wolf_kill_player(self, nick):
-        if nick == '取消':
-            return None  # Skip without error, but end phase for single-player; for multi, no effect
-        target_nick = nick.split('.')[-1].strip()
-        if target_nick == self.nick:
-            return '不能击杀自己'
-        target = self.room.players.get(target_nick)
-        if not target or target.status == PlayerStatus.DEAD:
-            return '目标已死亡'
-        target.status = PlayerStatus.PENDING_DEAD
-        self.send_msg(f'你选择了击杀 {target_nick}')
-        return True  # 必须返回 True
-
-    @player_action
-    def seer_identify_player(self, nick):
-        target_nick = nick.split('.')[-1].strip()
-        target = self.room.players.get(target_nick)
-        if not target:
-            return '查无此人'
-        self.send_msg(f'玩家 {target_nick} 的身份是 {target.role}')
-        return True  # 必须返回 True
-
-    @player_action
-    def witch_kill_player(self, nick):
-        if not self.witch_has_poison():
-            return '没有毒药了'
-        target_nick = nick.split('.')[-1].strip()
-        target = self.room.players.get(target_nick)
-        if not target or target.status == PlayerStatus.DEAD:
-            return '目标已死亡'
-        target.status = PlayerStatus.PENDING_POISON
-        self.skill['poison'] = False
-        return True  # 必须返回 True
-
-    @player_action
-    def witch_heal_player(self, nick):
-        if self.room.witch_rule == WitchRule.NO_SELF_RESCUE and nick == self.nick:
-            return '不能解救自己'
-        if self.room.witch_rule == WitchRule.SELF_RESCUE_FIRST_NIGHT_ONLY:
-            if nick == self.nick and self.room.round != 1:
-                return '仅第一晚可以解救自己'
-
-        if not self.witch_has_heal():
-            return '没有解药了'
-
-        target = self.room.players.get(nick)
-        if not target:
-            return '查无此人'
-
-        # 只有 PENDING_DEAD 才能救
-        if target.status != PlayerStatus.PENDING_DEAD:
-            return '此人未被刀'
-
-        target.status = PlayerStatus.PENDING_HEAL
-        self.skill['heal'] = False
-        return True  # 必须返回 True
-
-    @player_action
-    def guard_protect_player(self, nick):
-        if self.skill.get('last_protect') == nick:
-            return '两晚不可守卫同一玩家'
-
-        target = self.room.players.get(nick)
-        if not target:
-            return '查无此人'
-
-        if target.status == PlayerStatus.PENDING_POISON:
-            return '守卫无法防御毒药'
-
-        if target.status == PlayerStatus.PENDING_HEAL and self.room.guard_rule == GuardRule.MED_CONFLICT:
-            target.status = PlayerStatus.PENDING_DEAD
-            return '守救冲突，目标死亡'
-
-        target.status = PlayerStatus.PENDING_GUARD
-        self.skill['last_protect'] = nick
-        return True  # 必须返回 True
-
-    @player_action  # 保留装饰器，但因为 room.waiting=False，不会阻塞
-    def hunter_gun_status(self):
-        can = self.skill.get('can_shoot', True)
-        status = "可以开枪" if can else "无法开枪"
-        self.send_msg(f'🔫 你的开枪状态：{status}')
-        return True
-
-    @player_action
-    def dreamer_select(self, nick):
-        if nick == self.nick:
-            return '不能选择自己'
-        target = self.room.players.get(nick)
-        if not target or target.status == PlayerStatus.DEAD:
-            return '目标已死亡'
-        self.skill['curr_dream_target'] = nick
-        return True  # 必须返回 True
+        if self.role_instance:
+            self.role_instance.skip()
 
     @classmethod
     def validate_nick(cls, nick) -> Optional[str]:
@@ -250,7 +118,8 @@ class User:
             input_blocking=False,
             room=None,
             role=None,
-            skill=None,  # __post_init__ 会初始化
+            role_instance=None,
+            skill=None,
             status=None,
             game_msg=None,
             game_msg_syncer=None
