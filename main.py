@@ -48,15 +48,32 @@ async def main():
     )
 
     if data['cmd'] == '创建房间':
-        room_config = await input_group('房间设置', inputs=[
-            input(name='wolf_num', label='普通狼数', type=NUMBER, value='3'),
-            checkbox(name='god_wolf', label='特殊狼', inline=True, options=Role.as_god_wolf_options()),
-            input(name='citizen_num', label='普通村民数', type=NUMBER, value='4'),
-            checkbox(name='god_citizen', label='特殊村民', inline=True,
-                     options=Role.as_god_citizen_options()),
-            select(name='witch_rule', label='女巫解药规则', options=WitchRule.as_options()),
-            select(name='guard_rule', label='守卫规则', options=GuardRule.as_options()),
+        # 先显示板子预设选择
+        preset_data = await input_group('板子预设', inputs=[
+            actions(name='preset', buttons=['3人测试板子', '自定义配置'], help_text='选择预设或自定义')
         ])
+        
+        if preset_data['preset'] == '3人测试板子':
+            # 使用3人测试板子预设：1普通狼人，1平民，1预言家
+            room_config = {
+                'wolf_num': 1,
+                'god_wolf': [],
+                'citizen_num': 1,
+                'god_citizen': ['预言家'],
+                'witch_rule': '仅第一夜可自救',
+                'guard_rule': '同时被守被救时，对象死亡'
+            }
+        else:
+            # 自定义配置
+            room_config = await input_group('房间设置', inputs=[
+                input(name='wolf_num', label='普通狼数', type=NUMBER, value='3'),
+                checkbox(name='god_wolf', label='特殊狼', inline=True, options=Role.as_god_wolf_options()),
+                input(name='citizen_num', label='普通村民数', type=NUMBER, value='4'),
+                checkbox(name='god_citizen', label='特殊村民', inline=True,
+                         options=Role.as_god_citizen_options()),
+                select(name='witch_rule', label='女巫解药规则', options=WitchRule.as_options()),
+                select(name='guard_rule', label='守卫规则', options=GuardRule.as_options()),
+            ])
         room = Room.alloc(room_config)
     elif data['cmd'] == '加入房间':
         room = Room.get(await input('房间号', type=TEXT, validate=Room.validate_room_join))
@@ -77,7 +94,7 @@ async def main():
         if current_user is room.get_host():
             if not room.started:
                 host_ops += [
-                    actions(name='host_op', buttons=['开始游戏'], help_text='你是房主')
+                    actions(name='host_op', buttons=['开始游戏', '房间配置'], help_text='你是房主')
                 ]
             elif room.stage == GameStage.Day and room.round > 0:
                 host_ops += [
@@ -88,12 +105,10 @@ async def main():
                     )
                 ]
 
-
         # 玩家操作
         user_ops = []
         if room.started and current_user.role_instance:
             user_ops = current_user.role_instance.get_actions()
-        
 
             # === 上警阶段：10秒举手 ===
             if room.stage == GameStage.SHERIFF and current_user.status == PlayerStatus.ALIVE:
@@ -106,7 +121,7 @@ async def main():
                 ]
 
             # === 发言阶段 ===
-            if hasattr(room, 'current_speaker') and room.stage == 'SPEECH' and current_user.nick == room.current_speaker:
+            if hasattr(room, 'current_speaker') and room.stage == GameStage.SPEECH and current_user.nick == room.current_speaker:
                 user_ops += [
                     put_text('你的发言时间到！'),
                     actions(
@@ -146,37 +161,52 @@ async def main():
             async def _countdown(user, seconds=20):
                 try:
                     for i in range(seconds, 0, -1):
-                        # 调试日志：记录倒计时 tick
-                        # 将调试信息作为私聊发送到对应玩家，避免出现在终端日志
-                        try:
-                            if user and user.room:
-                                user.send_msg(f"倒计时 tick for {user.nick}: {i}s")
-                        except Exception:
-                            pass
+                        # 调试日志（不再发送到玩家私聊或终端），仅在 logger 中记录
+                        # 不在终端或私聊输出调试信息，避免污染日志/消息区
 
-                        # 在专用 scope 中更新倒计时，避免向消息区追加多条记录
+                        # 在操作窗口内的专用 scope 中更新倒计时（覆盖同一行），避免消息区污染
                         try:
-                            with use_scope(f'countdown_{user.nick}', clear=True):
+                            with use_scope(f'input_countdown_{user.nick}', clear=True):
                                 put_html(f"<div style='color:#c00; font-weight:bold; font-size:18px'>倒计时：{i}s</div>")
                         except Exception:
-                            # 作为后备，仍然向私聊消息区追加
-                            try:
-                                user.game_msg.append(put_html(f"<div style='color:#c00; font-weight:bold; font-size:18px'>倒计时：{i}s</div>"))
-                            except Exception:
-                                pass
+                            # 忽略更新失败
+                            pass
 
                         await asyncio.sleep(1)
 
                     try:
-                        get_current_session().send_client_event({'event': 'from_cancel', 'task_id': user.main_task_id, 'data': None})
+                        # 超时时，若玩家已做出临时选择则确认之；否则视为放弃并跳过
+                        pending_keys = [
+                            'wolf_choice', 'pending_witch_action', 'pending_protect',
+                            'pending_dream_target', 'pending_target'
+                        ]
+                        has_pending = any(user.skill.get(k) for k in pending_keys)
+
+                        if has_pending and user.role_instance and hasattr(user.role_instance, 'confirm'):
+                            try:
+                                user.role_instance.confirm()
+                            except Exception:
+                                pass
+                        else:
+                            # 没有选择 -> 跳过当前玩家动作
+                            try:
+                                user.skip()
+                            except Exception:
+                                pass
+
+                        # 无论如何都发送客户端取消事件以收起输入控件
+                        try:
+                            get_current_session().send_client_event({'event': 'from_cancel', 'task_id': user.main_task_id, 'data': None})
+                        except Exception:
+                            pass
                     except Exception:
                         pass
                 finally:
                     user.skill.pop('countdown_task', None)
 
-                    # 清理倒计时显示
+                    # 清理倒计时显示（操作窗口内）
                     try:
-                        with use_scope(f'countdown_{user.nick}', clear=True):
+                        with use_scope(f'input_countdown_{user.nick}', clear=True):
                             put_html('')
                     except Exception:
                         pass
@@ -189,6 +219,14 @@ async def main():
             if current_user.skill.get('countdown_task') is None and is_night_stage:
                 try:
                     if current_user.role_instance and current_user.role_instance.can_act_at_night:
+                        # 清理房间日志中遗留的倒计时私聊信息，避免旧条目继续显示在 Private 区
+                        try:
+                            if current_user.room and isinstance(current_user.room.log, list):
+                                filtered = [e for e in current_user.room.log if not (e[0] == current_user.nick and isinstance(e[1], str) and '倒计时' in e[1])]
+                                current_user.room.log = filtered
+                        except Exception:
+                            pass
+
                         task = asyncio.create_task(_countdown(current_user, 20))
                         current_user.skill['countdown_task'] = task
                 except Exception:
@@ -196,6 +234,17 @@ async def main():
 
             current_user.input_blocking = True
             with use_scope('input_group', clear=True):  # 替换 clear('input_group')
+                # 在操作窗口内创建单行倒计时显示 scope（仅在夜间阶段且玩家可行动时）
+                try:
+                    if is_night_stage and current_user.role_instance and current_user.role_instance.can_act_at_night:
+                        # 在 input_group scope 内创建一个可更新的子 scope 占位符，保证其显示在操作窗口内
+                        try:
+                            put_scope(f'input_countdown_{current_user.nick}')
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
                 data = await input_group('操作', inputs=ops, cancelable=True)
             current_user.input_blocking = False
 
@@ -204,6 +253,12 @@ async def main():
                 task = current_user.skill.pop('countdown_task', None)
                 if task:
                     task.cancel()
+                # 清理倒计时显示（操作窗口内）
+                try:
+                    with use_scope(f'input_countdown_{current_user.nick}', clear=True):
+                        put_html('')
+                except Exception:
+                    pass
                 # 调用角色 confirm（若实现）
                 if current_user.role_instance and hasattr(current_user.role_instance, 'confirm'):
                     try:
@@ -215,12 +270,44 @@ async def main():
                 continue
 
         if data is None:
+            # 清理倒计时显示并跳过
+            try:
+                with use_scope(f'input_countdown_{current_user.nick}', clear=True):
+                    put_html('')
+            except Exception:
+                pass
             current_user.skip()
             continue
 
         # === Host logic ===
         if data.get('host_op') == '开始游戏':
             await room.start_game()
+        if data.get('host_op') == '房间配置':
+            # 房主重新配置房间
+            room_config = await input_group('房间设置', inputs=[
+                input(name='wolf_num', label='普通狼数', type=NUMBER, value=str(room.roles.count(Role.WOLF))),
+                checkbox(name='god_wolf', label='特殊狼', inline=True, options=Role.as_god_wolf_options(),
+                        value=[opt for opt in Role.as_god_wolf_options() if Role.from_option(opt) in room.roles]),
+                input(name='citizen_num', label='普通村民数', type=NUMBER, value=str(room.roles.count(Role.CITIZEN))),
+                checkbox(name='god_citizen', label='特殊村民', inline=True, options=Role.as_god_citizen_options(),
+                        value=[opt for opt in Role.as_god_citizen_options() if Role.from_option(opt) in room.roles]),
+                select(name='witch_rule', label='女巫解药规则', options=WitchRule.as_options(),
+                      value=list(WitchRule.mapping().keys())[list(WitchRule.mapping().values()).index(room.witch_rule)]),
+                select(name='guard_rule', label='守卫规则', options=GuardRule.as_options(),
+                      value=list(GuardRule.mapping().keys())[list(GuardRule.mapping().values()).index(room.guard_rule)]),
+            ])
+            # 更新房间配置
+            from copy import copy
+            roles = []
+            roles.extend([Role.WOLF] * room_config['wolf_num'])
+            roles.extend([Role.CITIZEN] * room_config['citizen_num'])
+            roles.extend(Role.from_option(room_config['god_wolf']))
+            roles.extend(Role.from_option(room_config['god_citizen']))
+            room.roles = copy(roles)
+            room.roles_pool = copy(roles)
+            room.witch_rule = WitchRule.from_option(room_config['witch_rule'])
+            room.guard_rule = GuardRule.from_option(room_config['guard_rule'])
+            room.broadcast_msg(f'房间配置已更新：{room.desc()}')
         if data.get('host_vote_op'):
             voted_nick = data.get('host_vote_op').split('.')[-1].strip()
             await room.vote_kill(voted_nick)
