@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING, Any
 
 from pywebio.session import run_async
-from pywebio.output import output
+from pywebio.output import output, put_html
 from pywebio.session import get_current_session
 from pywebio.session.coroutinebased import TaskHandler
 
@@ -62,7 +62,8 @@ class User:
             if not self.room: break
             for msg in self.room.log[last_idx:]:
                 if msg[0] == self.nick:
-                    self.game_msg.append(f'Private: {msg[1]}')
+                    # 私聊消息以红色显示
+                    self.game_msg.append(put_html(f"<div style='color:red'>Private: {msg[1]}</div>"))
                 elif msg[0] == Config.SYS_NICK:
                     self.game_msg.append(f'Public: {msg[1]}')
                 elif msg[0] is None and msg[1] == LogCtrl.RemoveInput and self.input_blocking:

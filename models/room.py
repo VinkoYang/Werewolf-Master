@@ -65,6 +65,8 @@ class Room:
             return
         self.started = True
         self.game_over = False
+        # 在游戏开始时添加公共隔断，提升可读性
+        self.broadcast_msg('=' * 22)
         self.broadcast_msg("游戏开始！身份发放中...", tts=True)
         await asyncio.sleep(2)
 
@@ -103,6 +105,8 @@ class Room:
     async def night_logic(self):
         logger.info(f"=== 第 {self.round + 1} 夜 开始 ===")
         self.round += 1
+        # 在天黑提示前加上夜数隔断，便于在 Public 区分每晚开始
+        self.broadcast_msg(f"============ 第 {self.round} 晚 ============")
         self.broadcast_msg('天黑请闭眼', tts=True)
         await asyncio.sleep(3)
 
