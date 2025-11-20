@@ -20,6 +20,7 @@ from utils import add_cancel_button, get_interface_ip
 # ==================== 接入外网：pyngrok ====================
 from pyngrok import ngrok
 import threading
+import os
 
 basicConfig(stream=sys.stdout,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -63,7 +64,7 @@ async def main():
         raise NotImplementedError
 
     # 增大消息显示区域高度，提供更充足的聊天/系统信息显示空间
-    put_scrollable(current_user.game_msg, height=600, keep_bottom=True)
+    put_scrollable(current_user.game_msg, height=400, keep_bottom=True)
     current_user.game_msg.append(put_text(room.desc()))
 
     room.add_player(current_user)
@@ -140,17 +141,32 @@ async def main():
                 except Exception:
                     pass
 
-            # 开启倒计时任务（每个玩家单独）
+            # 开启倒计时任务（每个玩家单独）仅在夜间角色可行动时启动
+            NIGHT_STAGES = {GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.DREAMER}
             async def _countdown(user, seconds=20):
                 try:
                     for i in range(seconds, 0, -1):
-                        # 显示倒计时（私聊）
+                        # 调试日志：记录倒计时 tick
+                        # 将调试信息作为私聊发送到对应玩家，避免出现在终端日志
                         try:
-                            user.game_msg.append(put_html(f"<div style='color:blue'>倒计时：{i}s</div>"))
+                            if user and user.room:
+                                user.send_msg(f"倒计时 tick for {user.nick}: {i}s")
                         except Exception:
                             pass
+
+                        # 在专用 scope 中更新倒计时，避免向消息区追加多条记录
+                        try:
+                            with use_scope(f'countdown_{user.nick}', clear=True):
+                                put_html(f"<div style='color:#c00; font-weight:bold; font-size:18px'>倒计时：{i}s</div>")
+                        except Exception:
+                            # 作为后备，仍然向私聊消息区追加
+                            try:
+                                user.game_msg.append(put_html(f"<div style='color:#c00; font-weight:bold; font-size:18px'>倒计时：{i}s</div>"))
+                            except Exception:
+                                pass
+
                         await asyncio.sleep(1)
-                    # 超时：取消当前输入（发送客户端事件）
+
                     try:
                         get_current_session().send_client_event({'event': 'from_cancel', 'task_id': user.main_task_id, 'data': None})
                     except Exception:
@@ -158,10 +174,25 @@ async def main():
                 finally:
                     user.skill.pop('countdown_task', None)
 
-            if current_user.skill.get('countdown_task') is None:
-                # 只在没有倒计时时创建
-                task = asyncio.create_task(_countdown(current_user, 20))
-                current_user.skill['countdown_task'] = task
+                    # 清理倒计时显示
+                    try:
+                        with use_scope(f'countdown_{user.nick}', clear=True):
+                            put_html('')
+                    except Exception:
+                        pass
+            # 仅当处于夜间阶段且当前玩家为能在夜间行动的角色时才启动倒计时
+            try:
+                is_night_stage = room.stage in NIGHT_STAGES
+            except Exception:
+                is_night_stage = False
+
+            if current_user.skill.get('countdown_task') is None and is_night_stage:
+                try:
+                    if current_user.role_instance and current_user.role_instance.can_act_at_night:
+                        task = asyncio.create_task(_countdown(current_user, 20))
+                        current_user.skill['countdown_task'] = task
+                except Exception:
+                    pass
 
             current_user.input_blocking = True
             with use_scope('input_group', clear=True):  # 替换 clear('input_group')
@@ -253,23 +284,32 @@ if __name__ == '__main__':
         )
     signal.signal(signal.SIGINT, stop_server)
 
-    port = 8080
+    # 默认端口，可通过环境变量 `PORT` 覆盖（方便在端口被占用时切换）
+    port = int(os.environ.get('PORT', '8080'))
     ip = get_interface_ip()
 
-    try:
-        public_url = ngrok.connect(port, bind_tls=True)
-        ngrok_url = str(public_url).replace("NgrokTunnel: \"", "").replace("\"", "")
-        print("\n" + "="*70)
-        print("       狼人杀已上线！全球可玩！")
-        print(f"       局域网地址 → http://{ip}:{port}")
-        print(f"       公网地址 → {ngrok_url}")
-        print("       分享这个链接给所有玩家：")
-        print(f"       {ngrok_url}")
-        print("="*70 + "\n")
-    except Exception as e:
-        print(f"ngrok 启动失败（可能是网络问题）：{e}")
-        print(f"仅限局域网：http://{ip}:{port}")
-        ngrok_url = None
+    ngrok_url = None
+    if os.environ.get('DISABLE_NGROK', '').lower() in ('1', 'true', 'yes'):
+        print("已检测到 DISABLE_NGROK，跳过 ngrok 连接，服务仅在局域网可见。")
+    else:
+        try:
+            # 如果没有提供 authtoken，则跳过 ngrok（避免频繁出现认证错误日志）
+            if not os.environ.get('NGROK_AUTHTOKEN') and not os.environ.get('NGROK_AUTH_TOKEN'):
+                raise RuntimeError('未提供 NGROK_AUTHTOKEN，跳过 ngrok 连接')
+
+            public_url = ngrok.connect(port, bind_tls=True)
+            ngrok_url = str(public_url).replace("NgrokTunnel: \"", "").replace("\"", "")
+            print("\n" + "="*70)
+            print("       狼人杀已上线！全球可玩！")
+            print(f"       局域网地址 → http://{ip}:{port}")
+            print(f"       公网地址 → {ngrok_url}")
+            print("       分享这个链接给所有玩家：")
+            print(f"       {ngrok_url}")
+            print("="*70 + "\n")
+        except Exception as e:
+            print(f"ngrok 启动失败（可能是网络或未授权）：{e}")
+            print(f"仅限局域网：http://{ip}:{port}")
+            ngrok_url = None
 
     logger.info(f"狼人杀服务器启动成功！")
     logger.info(f"局域网访问：http://{ip}:{port}")

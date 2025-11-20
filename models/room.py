@@ -130,8 +130,14 @@ class Room:
             target = self.players.get(chosen)
             if target and target.status == PlayerStatus.ALIVE:
                 target.status = PlayerStatus.PENDING_DEAD
-                # 记录被狼选择的信息到日志（可作为提示）
-                self.broadcast_msg(f"狼人选择了 {chosen}", tts=False)
+            # 将被狼选择的信息仅发送给狼人私聊（非公开）
+            for u in self.players.values():
+                if u.role in (Role.WOLF, Role.WOLF_KING):
+                    try:
+                        # 显式调用 room.send_msg，确保消息被标记为私聊（recipient = u.nick）
+                        self.send_msg(f"狼人选择了 {chosen}", nick=u.nick)
+                    except Exception:
+                        pass
             # 清理投票记录
             if 'wolf_votes' in self.skill:
                 del self.skill['wolf_votes']
@@ -139,7 +145,13 @@ class Room:
             for u in self.players.values():
                 u.skill.pop('wolf_choice', None)
         else:
-            self.broadcast_msg("狼人空刀", tts=True)
+            # 狼人空刀也应为狼人私聊信息
+            for u in self.players.values():
+                if u.role in (Role.WOLF, Role.WOLF_KING):
+                    try:
+                        self.send_msg("狼人空刀", nick=u.nick)
+                    except Exception:
+                        pass
 
         await asyncio.sleep(1)
         self.broadcast_msg('狼人请闭眼', tts=True)
