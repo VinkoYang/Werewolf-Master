@@ -3,10 +3,10 @@ import asyncio
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING, Any
 
-from pywebio import run_async
+from pywebio.session import run_async
 from pywebio.output import output
 from pywebio.session import get_current_session
-from pywebio.session.coroutinebased import TaskHandle
+from pywebio.session.coroutinebased import TaskHandler
 
 from enums import Role, PlayerStatus, LogCtrl
 from models.system import Config, Global
@@ -31,7 +31,7 @@ class User:
     seat: Optional[int] = None
 
     game_msg: OutputHandler = None
-    game_msg_syncer: Optional[TaskHandle] = None
+    game_msg_syncer: Optional[TaskHandler] = None
 
     def __post_init__(self):
         if self.skill is None:

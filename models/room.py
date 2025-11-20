@@ -6,8 +6,8 @@ from copy import copy
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple, Union, Any
 
-from pywebio import run_async
-from pywebio.session.coroutinebased import TaskHandle
+from pywebio.session import run_async
+from pywebio.session.coroutinebased import TaskHandler
 
 from enums import Role, WitchRule, GuardRule, GameStage, LogCtrl, PlayerStatus
 from models.system import Global, Config
@@ -52,7 +52,7 @@ class Room:
     log: List[Tuple[Union[str, None], Union[str, LogCtrl]]] = field(default_factory=list)
     skill: Dict[str, Any] = field(default_factory=dict)  # 用于狼人击杀等
 
-    logic_thread: Optional[TaskHandle] = None
+    logic_thread: Optional[TaskHandler] = None
     game_over: bool = False
 
     death_pending: List[str] = field(default_factory=list)
@@ -229,6 +229,10 @@ class Room:
 
     def list_alive_players(self) -> List[User]:
         return [u for u in self.players.values() if u.status == PlayerStatus.ALIVE]
+
+    def list_pending_kill_players(self) -> List[User]:
+        """返回本夜被标记为待死亡（被狼人击中）的玩家列表"""
+        return [u for u in self.players.values() if u.status == PlayerStatus.PENDING_DEAD]
 
     def is_full(self) -> bool:
         return len(self.players) >= len(self.roles)
