@@ -62,7 +62,8 @@ async def main():
     else:
         raise NotImplementedError
 
-    put_scrollable(current_user.game_msg, height=200, keep_bottom=True)
+    # 增大消息显示区域高度，提供更充足的聊天/系统信息显示空间
+    put_scrollable(current_user.game_msg, height=600, keep_bottom=True)
     current_user.game_msg.append(put_text(room.desc()))
 
     room.add_player(current_user)
