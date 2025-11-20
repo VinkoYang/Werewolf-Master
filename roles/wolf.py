@@ -23,24 +23,80 @@ class Wolf(RoleBase):
             return []
 
         room = self.user.room
-        alive_players = room.list_alive_players()
-        buttons = [f"{u.seat}. {u.nick}" for u in alive_players if u.nick != self.user.nick]
+        # 显示所有玩家（包含自己），但已出局的玩家按钮不可用（灰色）
+        players = sorted(room.players.values(), key=lambda x: x.seat if x.seat is not None else 0)
 
-        return [
+        # 收集当前的狼人投票信息，用于标记已被选择的目标
+        wolf_votes = room.skill.get('wolf_votes', {})
+
+        # 构建选择按钮：使用 dict 格式以支持 disabled/color
+        buttons = []
+        for u in players:
+            label = f"{u.seat}. {u.nick}"
+            disabled = (u.status == PlayerStatus.DEAD)
+            btn = {'label': label, 'value': label}
+            if disabled:
+                btn['disabled'] = True
+                btn['color'] = 'secondary'
+
+            # 如果该玩家已被一个或多个狼人选择，标记为危险色
+            voters = wolf_votes.get(u.nick, [])
+            if voters:
+                btn['color'] = 'danger'
+
+            buttons.append(btn)
+
+        # 在按钮上方显示当前被谁选择的状态
+        summary_lines = []
+        for target, voters in wolf_votes.items():
+            summary_lines.append(f"{target} 被 {', '.join(voters)} 选择")
+
+        inputs = []
+        if summary_lines:
+            from pywebio.output import put_html
+            summary_html = "<br>".join(summary_lines)
+            inputs.append(put_html(f"<div style='color:#c00'>{summary_html}</div>"))
+
+        inputs.append(
             actions(
                 name='wolf_team_op',
-                buttons=add_cancel_button(buttons),
+                buttons=buttons + [{'label': '放弃', 'type': 'cancel'}],
                 help_text='狼人，请选择要击杀的对象。'
             )
-        ]
+        )
+
+        return inputs
 
     @player_action
     def kill_player(self, nick: str) -> Optional[str]:
-        if nick == '取消':
+        if nick == '取消' or nick == '放弃':
             return None
 
-        self.user.skill['acted_this_stage'] = True
-
         room = self.user.room
-        room.skill.setdefault('wolf_kill', set()).add(nick)
+
+        # 解析传入的 "seat. nick" 格式，取出昵称
+        target_nick = nick.split('.', 1)[-1].strip()
+
+        # 只暂存选择，等待确认
+        prev_choice = self.user.skill.get('wolf_choice')
+        if prev_choice:
+            votes_map = room.skill.setdefault('wolf_votes', {})
+            if prev_choice in votes_map and self.user.nick in votes_map[prev_choice]:
+                votes_map[prev_choice].remove(self.user.nick)
+
+        self.user.skill['wolf_choice'] = target_nick
+        return 'PENDING'
+
+    @player_action
+    def confirm(self) -> Optional[str]:
+        # 将暂存的选择登记为正式投票
+        room = self.user.room
+        target_nick = self.user.skill.pop('wolf_choice', None)
+        if not target_nick:
+            return '未选择目标'
+        votes_map = room.skill.setdefault('wolf_votes', {})
+        votes_map.setdefault(target_nick, [])
+        if self.user.nick not in votes_map[target_nick]:
+            votes_map[target_nick].append(self.user.nick)
+        self.user.skill['acted_this_stage'] = True
         return True

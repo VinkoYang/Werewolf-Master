@@ -9,7 +9,7 @@ from pywebio import start_server
 from pywebio.input import *
 from pywebio.output import *
 from pywebio.output import use_scope
-from pywebio.session import defer_call, get_current_task_id
+from pywebio.session import defer_call, get_current_task_id, get_current_session
 
 
 from enums import WitchRule, GuardRule, Role, GameStage, PlayerStatus
@@ -130,10 +130,58 @@ async def main():
             continue
 
         if ops:
+            # 夜间操作显示 20s 倒计时与确认键
+            if room.stage is not None:
+                # 仅在有玩家操作时（夜晚阶段）追加确认键
+                # 避免重复添加：只在 user_ops 非空且为夜间角色时加入确认
+                try:
+                    if current_user.role_instance and current_user.role_instance.can_act_at_night:
+                        ops = ops + [actions(name='confirm_action', buttons=['确认'], help_text='确认当前选择（20秒内）')]
+                except Exception:
+                    pass
+
+            # 开启倒计时任务（每个玩家单独）
+            async def _countdown(user, seconds=20):
+                try:
+                    for i in range(seconds, 0, -1):
+                        # 显示倒计时（私聊）
+                        try:
+                            user.game_msg.append(put_html(f"<div style='color:blue'>倒计时：{i}s</div>"))
+                        except Exception:
+                            pass
+                        await asyncio.sleep(1)
+                    # 超时：取消当前输入（发送客户端事件）
+                    try:
+                        get_current_session().send_client_event({'event': 'from_cancel', 'task_id': user.main_task_id, 'data': None})
+                    except Exception:
+                        pass
+                finally:
+                    user.skill.pop('countdown_task', None)
+
+            if current_user.skill.get('countdown_task') is None:
+                # 只在没有倒计时时创建
+                task = asyncio.create_task(_countdown(current_user, 20))
+                current_user.skill['countdown_task'] = task
+
             current_user.input_blocking = True
             with use_scope('input_group', clear=True):  # 替换 clear('input_group')
                 data = await input_group('操作', inputs=ops, cancelable=True)
             current_user.input_blocking = False
+
+            # 如果用户按下确认键，取消倒计时并调用角色确认方法（若存在）
+            if data and data.get('confirm_action'):
+                task = current_user.skill.pop('countdown_task', None)
+                if task:
+                    task.cancel()
+                # 调用角色 confirm（若实现）
+                if current_user.role_instance and hasattr(current_user.role_instance, 'confirm'):
+                    try:
+                        rv = current_user.role_instance.confirm()
+                    except Exception as e:
+                        current_user.send_msg(f'确认失败: {e}')
+                # 跳过后续动作处理（confirm 已处理）
+                await asyncio.sleep(0.1)
+                continue
 
         if data is None:
             current_user.skip()

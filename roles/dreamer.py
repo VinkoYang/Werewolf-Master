@@ -36,6 +36,19 @@ class Dreamer(RoleBase):
         target = self.user.room.players.get(nick)
         if not target or target.status == PlayerStatus.DEAD:
             return '目标已死亡'
+
+        # 暂存梦游目标
+        self.user.skill['pending_dream_target'] = nick
+        return 'PENDING'
+
+    @player_action
+    def confirm(self) -> Optional[str]:
+        nick = self.user.skill.pop('pending_dream_target', None)
+        if not nick:
+            return '未选择目标'
+        target = self.user.room.players.get(nick)
+        if not target or target.status == PlayerStatus.DEAD:
+            return '目标已死亡'
         self.user.skill['curr_dream_target'] = nick
         self.user.skill['acted_this_stage'] = True
         return True

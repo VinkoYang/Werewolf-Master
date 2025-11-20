@@ -225,7 +225,43 @@ main.py 中的输入处理逻辑调整为调用 user.role_instance 的方法。
 
 - 兼容性：重构后，代码功能保持不变，但更模块化。添加新角色（如“白痴”）只需创建 roles/idiot.py，定义类，实现技能，然后在映射中注册。
 
+## 2025-11-20 Moonlight 分支优化
 
-    
+1. 在游戏开始处添加公共隔断（一行 ======================），然后广播 游戏开始！身份发放中...。
+在每晚开始处添加夜数隔断，格式为 ============ 第 n 晚 ============，随后广播 天黑请闭眼。
+
+2. 狼人操作改动（文件 & 要点）：
+
+wolf.py
+
+get_actions:
+显示房间中所有玩家（包含狼人自己）。
+已出局玩家按钮不可点击并显示为灰色（disabled + color='secondary'）。
+使用按钮 dict 支持 color/disabled，若某玩家被一个或多个狼选择，按钮显示为红色（danger）。
+在按钮上方显示当前被哪些狼人选中（例如："Bob 被 狼A, 狼B 选择"），用红色文本呈现。
+kill_player:
+接受 "seat. nick" 格式输入并提取昵称。
+支持更改选择：如果狼之前选过别的目标，会把之前的选择移除（安全检查后移除）。
+把选择记录到 room.skill['wolf_votes']（字典：target -> list of wolf nicks），并把狼自己的 user.skill['wolf_choice'] 记录为当前选择；设置 acted_this_stage=True。
+room.py
+
+3. 倒计时改动 
+夜间狼人结算由原来的 wolf_kill set 改成 wolf_votes 映射：
+统计每个被选目标的票数，选择票数最多的目标作为今晚唯一的被刀对象；若存在平票则随机从平票中选一位。
+将被选中的玩家设为 PENDING_DEAD，并在 public log 中写入提示（非语音）。
+清理 wolf_votes 数据与玩家的 wolf_choice 临时字段。
+通用：
+在 main.py 中添加每位有夜间操作的玩家的 20s 倒计时（每人单独任务），倒计时结束会自动取消当前输入（相当于超时跳过）。
+夜间操作界面自动追加 确认 按钮；点击则取消倒计时并调用玩家角色对象的 confirm() 方法（若实现），以提交选择并结束等待。
+行为支持：
+修改 base.py 中 player_action：新增返回值约定，支持 'PENDING'（暂存选择）与 'CONFIRMED'（最终确认）的语义，只有最终确认/True/None 会结束等待。
+将夜间角色的选择改为“暂存 + 确认”模式（示例实现已完成）：
+wolf.py：选择暂存为 user.skill['wolf_choice']，confirm() 会把选择登记到 room.skill['wolf_votes']。夜间结算会统计票数并选出最多票目标（平票随机）。
+seer.py：选择暂存为 pending_target，confirm() 会最终公布查验结果。
+guard.py：选择暂存为 pending_protect，confirm() 生效后设置守护。
+dreamer.py：选择暂存为 pending_dream_target，confirm() 生效。
+witch.py：解药/毒药选择暂存为 pending_witch_action，confirm() 统一处理 heal/kill。
+hunter.py：将开枪入口适配为支持确认（占位式实现，开枪目标逻辑可后续完善）。
+其他：调整了若干细节（如安全移除先前狼票、清理倒计时任务等）。
 
 

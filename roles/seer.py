@@ -35,6 +35,18 @@ class Seer(RoleBase):
         target = self.user.room.players.get(target_nick)
         if not target:
             return '查无此人'
+        # 暂存选择，等待确认
+        self.user.skill['pending_target'] = target_nick
+        return 'PENDING'
+
+    @player_action
+    def confirm(self) -> Optional[str]:
+        target_nick = self.user.skill.pop('pending_target', None)
+        if not target_nick:
+            return '未选择目标'
+        target = self.user.room.players.get(target_nick)
+        if not target:
+            return '查无此人'
         self.user.send_msg(f'玩家 {target_nick} 的身份是 {target.role}')
         self.user.skill['acted_this_stage'] = True
         return True

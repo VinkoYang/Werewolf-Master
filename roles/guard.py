@@ -39,9 +39,22 @@ class Guard(RoleBase):
         if not target:
             return '查无此人'
 
+        # 暂存守护目标，等待确认
+        self.user.skill['pending_protect'] = nick
+        return 'PENDING'
+
+    @player_action
+    def confirm(self) -> Optional[str]:
+        nick = self.user.skill.pop('pending_protect', None)
+        if nick is None:
+            return '未选择目标'
+        if self.user.skill.get('last_protect') == nick:
+            return '两晚不可守护同一玩家'
+        target = self.user.room.players.get(nick)
+        if not target:
+            return '查无此人'
         if target.status == PlayerStatus.PENDING_POISON:
             return '守卫无法防御毒药'
-
         if target.status == PlayerStatus.PENDING_HEAL and self.user.room.guard_rule == GuardRule.MED_CONFLICT:
             target.status = PlayerStatus.PENDING_DEAD
             return '守救冲突，目标死亡'

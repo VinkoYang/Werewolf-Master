@@ -49,6 +49,7 @@ class Witch(RoleBase):
 
         alive_buttons = [f"{u.seat}. {u.nick}" for u in room.list_alive_players()]
 
+        # 选择操作后需要确认
         return [
             radio(name='witch_mode', options=mode_options, required=True, inline=True),
             actions(
@@ -71,12 +72,40 @@ class Witch(RoleBase):
             return '没有解药了'
 
         target = room.players.get(nick)
-        if not target or target.status != PlayerStatus.PENDING_DEAD:
+        if not target:
+            return '查无此人'
+
+        # 只有 PENDING_DEAD 才能救
+        if target.status != PlayerStatus.PENDING_DEAD:
             return '此人未被刀'
 
-        target.status = PlayerStatus.PENDING_HEAL
-        self.user.skill['heal'] = False
-        return True
+        # 暂存救人选择，等待确认
+        self.user.skill['pending_witch_action'] = ('heal', nick)
+        return 'PENDING'
+
+    @player_action
+    def confirm(self) -> Optional[str]:
+        pending = self.user.skill.pop('pending_witch_action', None)
+        if not pending:
+            return '未选择操作'
+        mode, nick = pending
+        target = room.players.get(nick)
+        if not target:
+            return '查无此人'
+        if mode == 'heal':
+            if target.status != PlayerStatus.PENDING_DEAD:
+                return '此人未被刀'
+            target.status = PlayerStatus.PENDING_HEAL
+            self.user.skill['heal'] = False
+            self.user.skill['acted_this_stage'] = True
+            return True
+        elif mode == 'kill':
+            if target.status == PlayerStatus.DEAD:
+                return '目标已死亡'
+            target.status = PlayerStatus.PENDING_POISON
+            self.user.skill['poison'] = False
+            self.user.skill['acted_this_stage'] = True
+            return True
 
     @player_action
     def kill_player(self, nick: str) -> Optional[str]:
@@ -88,7 +117,6 @@ class Witch(RoleBase):
         target = self.user.room.players.get(target_nick)
         if not target or target.status == PlayerStatus.DEAD:
             return '目标已死亡'
-        target.status = PlayerStatus.PENDING_POISON
-        self.user.skill['poison'] = False
-        self.user.skill['acted_this_stage'] = True
-        return True
+        # 暂存毒人选择，等待确认
+        self.user.skill['pending_witch_action'] = ('kill', target_nick)
+        return 'PENDING'

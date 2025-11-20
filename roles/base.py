@@ -14,9 +14,13 @@ def player_action(func):
             return
 
         rv = func(self, *args, **kwargs)
-        if rv in [None, True]:
+        # 返回值约定：
+        # - None: 取消/无操作 -> 结束当前等待
+        # - True 或 'CONFIRMED': 最终确认，结束等待并标记为已行动
+        # - 'PENDING': 临时选择，不结束等待，等待玩家点击确认
+        if rv in [None, True, 'CONFIRMED']:
             self.user.room.waiting = False
-        if isinstance(rv, str):
+        if isinstance(rv, str) and rv not in ['PENDING', 'CONFIRMED']:
             self.user.send_msg(text=rv)
         return rv
     return wrapper

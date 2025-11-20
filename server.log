@@ -1,0 +1,44 @@
+ERROR:  authentication failed: Usage of ngrok requires a verified account and authtoken.
+ERROR:  
+ERROR:  Sign up for an account: https://dashboard.ngrok.com/signup
+ERROR:  Install your authtoken: https://dashboard.ngrok.com/get-started/your-authtoken
+ERROR:  
+ERROR:  ERR_NGROK_4018
+ERROR:  https://ngrok.com/docs/errors/err_ngrok_4018
+ERROR:  
+2025-11-20 21:44:54,972 - pyngrok.process.ngrok - ERROR - t=2025-11-20T21:44:54+0000 lvl=eror msg="failed to reconnect session" obj=tunnels.session err="authentication failed: Usage of ngrok requires a verified account and authtoken.\n\nSign up for an account: https://dashboard.ngrok.com/signup\nInstall your authtoken: https://dashboard.ngrok.com/get-started/your-authtoken\r\n\r\nERR_NGROK_4018\r\n"
+2025-11-20 21:44:54,972 - pyngrok.process.ngrok - ERROR - t=2025-11-20T21:44:54+0000 lvl=eror msg="session closing" obj=tunnels.session err="authentication failed: Usage of ngrok requires a verified account and authtoken.\n\nSign up for an account: https://dashboard.ngrok.com/signup\nInstall your authtoken: https://dashboard.ngrok.com/get-started/your-authtoken\r\n\r\nERR_NGROK_4018\r\n"
+2025-11-20 21:44:54,973 - pyngrok.process.ngrok - ERROR - t=2025-11-20T21:44:54+0000 lvl=eror msg="terminating with error" obj=app err="authentication failed: Usage of ngrok requires a verified account and authtoken.\n\nSign up for an account: https://dashboard.ngrok.com/signup\nInstall your authtoken: https://dashboard.ngrok.com/get-started/your-authtoken\r\n\r\nERR_NGROK_4018\r\n"
+2025-11-20 21:44:54,973 - pyngrok.process.ngrok - CRITICAL - t=2025-11-20T21:44:54+0000 lvl=crit msg="command failed" err="authentication failed: Usage of ngrok requires a verified account and authtoken.\n\nSign up for an account: https://dashboard.ngrok.com/signup\nInstall your authtoken: https://dashboard.ngrok.com/get-started/your-authtoken\r\n\r\nERR_NGROK_4018\r\n"
+ngrok 启动失败（可能是网络问题）：The ngrok process errored on start: authentication failed: Usage of ngrok requires a verified account and authtoken.\n\nSign up for an account: https://dashboard.ngrok.com/signup\nInstall your authtoken: https://dashboard.ngrok.com/get-started/your-authtoken\r\n\r\nERR_NGROK_4018\r\n.
+仅限局域网：http://10.0.13.186:8080
+2025-11-20 21:44:54,974 - Wolf - INFO - 狼人杀服务器启动成功！
+2025-11-20 21:44:54,974 - Wolf - INFO - 局域网访问：http://10.0.13.186:8080
+Running on all addresses.
+Use http://10.0.13.186:8080/ to access the application
+2025-11-20 21:45:04,766 - Model - INFO - 用户 "1" 登录
+2025-11-20 21:45:06,977 - Model - INFO - 用户 "2" 登录
+2025-11-20 21:45:08,092 - Model - INFO - 用户 "3" 登录
+2025-11-20 21:45:09,895 - Model - INFO - 用户 "4" 登录
+2025-11-20 21:45:11,259 - Model - INFO - 用户 "5" 登录
+2025-11-20 21:45:15,428 - Model - INFO - 用户 "1" 加入房间 "29"，座位 1
+2025-11-20 21:45:20,705 - Model - INFO - 用户 "2" 加入房间 "29"，座位 2
+2025-11-20 21:45:22,833 - Model - INFO - 用户 "3" 加入房间 "29"，座位 3
+2025-11-20 21:45:24,938 - Model - INFO - 用户 "4" 加入房间 "29"，座位 4
+2025-11-20 21:45:27,042 - Model - INFO - 用户 "5" 加入房间 "29"，座位 5
+2025-11-20 21:45:28,958 - Utils - INFO - [语音] 游戏开始！身份发放中...
+2025-11-20 21:45:33,960 - Model - INFO - === 第 1 夜 开始 ===
+2025-11-20 21:45:33,960 - Utils - INFO - [语音] 天黑请闭眼
+2025-11-20 21:45:36,961 - Utils - INFO - [语音] 狼人请出现
+2025-11-20 21:45:52,646 - Utils - INFO - [语音] 狼人请闭眼
+2025-11-20 21:45:54,647 - Utils - INFO - [语音] 预言家请出现
+2025-11-20 21:46:08,130 - Utils - INFO - [语音] 预言家请闭眼
+2025-11-20 21:46:10,131 - Utils - INFO - [语音] 天亮请睁眼
+2025-11-20 21:46:12,132 - Utils - INFO - [语音] 进行警上竞选
+2025-11-20 21:46:12,132 - Utils - INFO - [语音] 游戏结束，狼人阵营获胜！好人被屠光。
+2025-11-20 21:46:14,133 - Utils - INFO - [语音] 1：预言家
+2025-11-20 21:46:14,133 - Utils - INFO - [语音] 2：狼人
+2025-11-20 21:46:14,133 - Utils - INFO - [语音] 3：平民
+2025-11-20 21:46:14,133 - Utils - INFO - [语音] 4：狼人
+2025-11-20 21:46:14,133 - Utils - INFO - [语音] 5：狼人
+2025-11-20 21:46:14,134 - Model - INFO - 房间 29 游戏结束：狼人阵营获胜！好人被屠光

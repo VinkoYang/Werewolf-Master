@@ -119,17 +119,25 @@ class Room:
         self.waiting = True
         await self.wait_for_player()
 
-        # 统一结算狼人击杀
-        if 'wolf_kill' in self.skill:
-            kills = self.skill['wolf_kill']
-            if len(kills) == 1:
-                target_nick = list(kills)[0]
-                target = self.players.get(target_nick)
-                if target and target.status == PlayerStatus.ALIVE:
-                    target.status = PlayerStatus.PENDING_DEAD
-            elif len(kills) > 1:
-                self.broadcast_msg("狼人内讧，空刀", tts=True)
-            del self.skill['wolf_kill']
+        # 统一结算狼人击杀（统计票数，最多票者为今晚被刀）
+        wolf_votes = self.skill.get('wolf_votes', {})
+        if wolf_votes:
+            # 计算每个目标的票数
+            counts = {t: len(voters) for t, voters in wolf_votes.items()}
+            max_count = max(counts.values())
+            candidates = [t for t, c in counts.items() if c == max_count]
+            chosen = random.choice(candidates) if len(candidates) > 1 else candidates[0]
+            target = self.players.get(chosen)
+            if target and target.status == PlayerStatus.ALIVE:
+                target.status = PlayerStatus.PENDING_DEAD
+                # 记录被狼选择的信息到日志（可作为提示）
+                self.broadcast_msg(f"狼人选择了 {chosen}", tts=False)
+            # 清理投票记录
+            if 'wolf_votes' in self.skill:
+                del self.skill['wolf_votes']
+            # 清理玩家临时选择
+            for u in self.players.values():
+                u.skill.pop('wolf_choice', None)
         else:
             self.broadcast_msg("狼人空刀", tts=True)
 
