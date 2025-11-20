@@ -18,18 +18,29 @@ class Seer(RoleBase):
         if not self.should_act():
             return []
         room = self.user.room
-        buttons = [f"{u.seat}. {u.nick}" for u in room.list_alive_players() if u.nick != self.user.nick]
+        # 显示所有玩家（包括自己和已出局的），自己和已出局的按钮灰色且不可选
+        players = sorted(room.players.values(), key=lambda x: x.seat if x.seat is not None else 0)
+        buttons = []
+        for u in players:
+            label = f"{u.seat}. {u.nick}"
+            # 自己或已出局的玩家：灰色且禁用
+            if u.nick == self.user.nick or u.status == PlayerStatus.DEAD:
+                buttons.append({'label': label, 'value': label, 'disabled': True, 'color': 'secondary'})
+            else:
+                buttons.append({'label': label, 'value': label})
+        
+        buttons.append({'label': '放弃', 'type': 'cancel'})
         return [
             actions(
                 name='seer_team_op',
-                buttons=add_cancel_button(buttons),
+                buttons=buttons,
                 help_text='预言家，请查验身份。'
             )
         ]
 
     @player_action
     def identify_player(self, nick: str) -> Optional[str]:
-        if nick == '取消':
+        if nick == '取消' or nick == '放弃':
             return None
         target_nick = nick.split('.', 1)[-1].strip()
         target = self.user.room.players.get(target_nick)
@@ -41,12 +52,21 @@ class Seer(RoleBase):
 
     @player_action
     def confirm(self) -> Optional[str]:
+        from enums import Role
         target_nick = self.user.skill.pop('pending_target', None)
         if not target_nick:
             return '未选择目标'
         target = self.user.room.players.get(target_nick)
         if not target:
             return '查无此人'
-        self.user.send_msg(f'玩家 {target_nick} 的身份是 {target.role}')
+        
+        # 判断目标阵营：狼人或好人
+        if target.role in (Role.WOLF, Role.WOLF_KING):
+            camp = '狼人'
+        else:
+            camp = '好人'
+        
+        # 发送私聊消息，显示座位号和阵营
+        self.user.send_msg(f'你选择查验{target.seat}号玩家，他的身份是{camp}')
         self.user.skill['acted_this_stage'] = True
         return True
