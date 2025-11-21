@@ -46,6 +46,11 @@ class User:
                 'dreamer_nick': None,
                 'sheriff_vote': None,
                 'acted_this_stage': False,  # 必须初始化
+                'last_words_skill_resolved': False,
+                'last_words_done': False,
+                'pending_last_skill': False,
+                'exile_vote_pending': False,
+                'exile_has_balloted': False,
             }
         if self.game_msg is None:
             self.game_msg = output()

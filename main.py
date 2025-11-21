@@ -113,6 +113,8 @@ async def main():
 
         # 非夜晚房主操作
         host_ops = []
+        sheriff_state = getattr(room, 'sheriff_state', {})
+        day_state = getattr(room, 'day_state', {})
         if current_user is room.get_host():
             if not room.started:
                 host_ops += [
@@ -126,28 +128,130 @@ async def main():
                         help_text='你是房主，本轮需要选择出局玩家'
                     )
                 ]
+            if room.stage in (GameStage.SHERIFF, GameStage.SPEECH):
+                if sheriff_state.get('phase') == 'await_vote':
+                    host_ops += [
+                        actions(
+                            name='sheriff_host_action',
+                            buttons=['警长投票'],
+                            help_text='发起警长投票'
+                        )
+                    ]
+                elif sheriff_state.get('phase') == 'await_pk_vote':
+                    host_ops += [
+                        actions(
+                            name='sheriff_host_action',
+                            buttons=['警长PK投票'],
+                            help_text='发起警长PK投票'
+                        )
+                    ]
+            if day_state.get('phase') == 'announcement':
+                host_ops += [
+                    actions(
+                        name='day_host_action',
+                        buttons=['公布昨夜信息'],
+                        help_text='公布昨夜死亡情况'
+                    )
+                ]
+            elif day_state.get('phase') == 'await_exile_vote':
+                host_ops += [
+                    actions(
+                        name='day_host_action',
+                        buttons=['放逐投票'],
+                        help_text='发起放逐投票'
+                    )
+                ]
+            elif day_state.get('phase') == 'await_exile_pk_vote':
+                host_ops += [
+                    actions(
+                        name='day_host_action',
+                        buttons=['放逐PK投票'],
+                        help_text='发起放逐PK投票'
+                    )
+                ]
 
         # 玩家操作
         user_ops = []
         if room.started and current_user.role_instance:
             user_ops = current_user.role_instance.get_actions()
 
-            # === 上警阶段：10秒举手 ===
-            if room.stage == GameStage.SHERIFF and current_user.status == PlayerStatus.ALIVE:
-                # 检查是否已经选择过
-                if not current_user.skill.get('sheriff_voted', False):
+            # === 警长竞选阶段 ===
+            if room.stage in (GameStage.SHERIFF, GameStage.SPEECH) and current_user.status == PlayerStatus.ALIVE:
+                state_phase = sheriff_state.get('phase')
+                if state_phase == 'signup' and not current_user.skill.get('sheriff_voted', False):
                     user_ops += [
                         actions(
                             name='sheriff_vote',
                             buttons=['上警', '不上警'],
-                            help_text='请选择是否上警（10秒内，未选视为不上警）'
+                            help_text='请选择是否上警（10秒内未选则视为不上警）'
+                        )
+                    ]
+
+                active_candidates = room.get_active_sheriff_candidates() if hasattr(room, 'get_active_sheriff_candidates') else []
+                if (
+                    state_phase in ('speech', 'await_vote', 'pk_speech', 'await_pk_vote') and
+                    current_user.nick in active_candidates and
+                    not current_user.skill.get('sheriff_withdrawn', False)
+                ):
+                    user_ops += [
+                        actions(
+                            name='sheriff_withdraw',
+                            buttons=['退水'],
+                            help_text='退水后将退出竞选'
+                        )
+                    ]
+
+                if (
+                    state_phase in ('vote', 'pk_vote') and
+                    current_user.nick in sheriff_state.get('eligible_voters', []) and
+                    not current_user.skill.get('sheriff_has_balloted', False)
+                ):
+                    buttons = []
+                    candidates = active_candidates
+                    for nick in candidates:
+                        player_obj = room.players.get(nick)
+                        seat = player_obj.seat if player_obj and player_obj.seat is not None else '?'
+                        buttons.append({'label': f"{seat}. {nick}", 'value': f"{seat}. {nick}"})
+                    buttons.append({'label': '弃票', 'value': '弃票', 'color': 'secondary'})
+                    help_text = '请选择支持的警长候选人'
+                    user_ops += [
+                        actions(
+                            name='sheriff_ballot',
+                            buttons=buttons,
+                            help_text=help_text
+                        )
+                    ]
+
+            # === 遗言/技能阶段 ===
+            if room.stage == GameStage.LAST_WORDS and day_state.get('current_last_word') == current_user.nick:
+                supports_skill = bool(current_user.role_instance and hasattr(current_user.role_instance, 'supports_last_skill') and current_user.role_instance.supports_last_skill())
+                if (not current_user.skill.get('last_words_skill_resolved', False)) and not current_user.skill.get('pending_last_skill', False):
+                    buttons = ['放弃']
+                    if supports_skill:
+                        buttons = ['发动技能', '放弃']
+                    user_ops += [
+                        actions(
+                            name='last_word_skill',
+                            buttons=buttons,
+                            help_text='发表遗言前是否发动技能？（10秒）'
+                        )
+                    ]
+                elif day_state.get('last_words_allow_speech', True) and not current_user.skill.get('last_words_done', False):
+                    user_ops += [
+                        actions(
+                            name='last_word_done',
+                            buttons=['遗言结束'],
+                            help_text='发表完遗言后点击'
                         )
                     ]
 
             # === 发言阶段 ===
-            if hasattr(room, 'current_speaker') and room.stage == GameStage.SPEECH and current_user.nick == room.current_speaker:
+            if (
+                hasattr(room, 'current_speaker') and
+                room.stage in (GameStage.SPEECH, GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH) and
+                current_user.nick == room.current_speaker
+            ):
                 user_ops += [
-                    put_text('你的发言时间到！'),
                     actions(
                         name='speech_done',
                         buttons=['发言完毕'],
@@ -155,15 +259,23 @@ async def main():
                     )
                 ]
 
-        # === 房主专属：公布昨夜死亡 ===
-        if current_user is room.get_host() and hasattr(room, 'death_pending') and room.death_pending:
-            host_ops += [
-                actions(
-                    name='publish_death',
-                    buttons=['公布昨夜信息'],
-                    help_text='点击公布昨夜出局玩家'
-                )
-            ]
+            # === 放逐投票 ===
+            if room.stage in (GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE):
+                if current_user.skill.get('exile_vote_pending', False):
+                    buttons = []
+                    candidates = day_state.get('vote_candidates', [])
+                    for nick in candidates:
+                        player_obj = room.players.get(nick)
+                        seat = player_obj.seat if player_obj and player_obj.seat is not None else '?'
+                        buttons.append({'label': f"{seat}. {nick}", 'value': f"{seat}. {nick}"})
+                    buttons.append({'label': '弃票', 'value': '弃票', 'color': 'secondary'})
+                    user_ops += [
+                        actions(
+                            name='exile_vote',
+                            buttons=buttons,
+                            help_text='请选择要放逐的玩家'
+                        )
+                    ]
 
         ops = host_ops + user_ops
         if not ops:
@@ -186,10 +298,14 @@ async def main():
 
             # 开启倒计时任务（每个玩家单独）仅在夜间角色可行动时启动
             NIGHT_STAGES = {GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.DREAMER}
-            COUNTDOWN_STAGES = NIGHT_STAGES | {GameStage.SHERIFF}  # 包括上警阶段
+            DAY_TIMER_STAGES = {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE}
+            COUNTDOWN_STAGES = NIGHT_STAGES | DAY_TIMER_STAGES
             
             # 根据阶段决定倒计时时长
-            countdown_seconds = 10 if room.stage == GameStage.SHERIFF else 20
+            if room.stage in {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE}:
+                countdown_seconds = 10
+            else:
+                countdown_seconds = 20
             
             async def _countdown(user, seconds=20):
                 try:
@@ -211,10 +327,24 @@ async def main():
                         # 超时时，若玩家已做出临时选择则确认之；否则视为放弃并跳过
                         # 特殊处理：上警阶段
                         if user.room.stage == GameStage.SHERIFF:
-                            # 上警超时，默认为不上警
-                            if not user.skill.get('sheriff_voted', False):
-                                user.skill['sheriff_vote'] = '不上警'
-                                user.skill['sheriff_voted'] = True
+                            sheriff_state_inner = getattr(user.room, 'sheriff_state', {})
+                            phase = sheriff_state_inner.get('phase')
+                            if phase == 'signup' and not user.skill.get('sheriff_voted', False):
+                                user.room.record_sheriff_choice(user, '不上警')
+                            elif phase in ('vote', 'pk_vote') and user.skill.get('sheriff_vote_pending', False):
+                                user.room.record_sheriff_ballot(user, '弃票')
+                        elif user.room.stage == GameStage.LAST_WORDS:
+                            day_state_inner = getattr(user.room, 'day_state', {})
+                            current_last = day_state_inner.get('current_last_word')
+                            allow_speech = day_state_inner.get('last_words_allow_speech', True)
+                            if current_last == user.nick:
+                                if not user.skill.get('last_words_skill_resolved', False):
+                                    user.room.handle_last_word_skill_choice(user, '放弃')
+                                elif allow_speech and not user.skill.get('last_words_done', False):
+                                    user.room.complete_last_word_speech(user)
+                        elif user.room.stage in (GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE):
+                            if user.skill.get('exile_vote_pending', False):
+                                user.room.record_exile_vote(user, '弃票')
                         else:
                             pending_keys = ['wolf_choice', 'pending_protect', 'pending_dream_target', 'pending_target']
                             has_pending = any(user.skill.get(k) for k in pending_keys)
@@ -260,8 +390,27 @@ async def main():
 
             if current_user.skill.get('countdown_task') is None and is_countdown_stage:
                 try:
-                    # 上警阶段或夜间角色阶段都启动倒计时
-                    if room.stage == GameStage.SHERIFF or (current_user.role_instance and current_user.role_instance.can_act_at_night):
+                    should_start = False
+                    if room.stage == GameStage.SHERIFF:
+                        phase = sheriff_state.get('phase')
+                        if phase == 'signup' and not current_user.skill.get('sheriff_voted', False):
+                            should_start = True
+                        elif phase in ('vote', 'pk_vote') and current_user.skill.get('sheriff_vote_pending', False):
+                            should_start = True
+                    elif room.stage == GameStage.LAST_WORDS:
+                        if day_state.get('current_last_word') == current_user.nick:
+                            allow_speech = day_state.get('last_words_allow_speech', True)
+                            if not current_user.skill.get('last_words_skill_resolved', False):
+                                should_start = True
+                            elif allow_speech and not current_user.skill.get('last_words_done', False):
+                                should_start = True
+                    elif room.stage in (GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE):
+                        if current_user.skill.get('exile_vote_pending', False):
+                            should_start = True
+                    elif current_user.role_instance and current_user.role_instance.can_act_at_night:
+                        should_start = True
+
+                    if should_start:
                         # 清理房间日志中遗留的倒计时私聊信息，避免旧条目继续显示在 Private 区
                         try:
                             if current_user.room and isinstance(current_user.room.log, list):
@@ -282,7 +431,8 @@ async def main():
                     if is_countdown_stage:
                         # 在 input_group scope 内创建一个可更新的子 scope 占位符，保证其显示在操作窗口内
                         try:
-                            put_scope(f'input_countdown_{current_user.nick}')
+                            with use_scope(f'input_countdown_{current_user.nick}', clear=True):
+                                pass
                         except Exception:
                             pass
                 except Exception:
@@ -359,31 +509,84 @@ async def main():
                 voted_out.send_msg('🔫 你是猎人，可以立即开枪！')
                 # 这里可以添加猎人开枪按钮逻辑
 
+        if data.get('sheriff_host_action') and current_user is room.get_host():
+            action = data.get('sheriff_host_action')
+            if action == '警长投票':
+                msg = room.start_sheriff_vote(pk_mode=False)
+                if msg:
+                    current_user.send_msg(msg)
+            elif action == '警长PK投票':
+                msg = room.start_sheriff_vote(pk_mode=True)
+                if msg:
+                    current_user.send_msg(msg)
+
+        if data.get('day_host_action') and current_user is room.get_host():
+            action = data.get('day_host_action')
+            if action == '公布昨夜信息':
+                msg = room.publish_night_info()
+                if msg:
+                    current_user.send_msg(msg)
+            elif action == '放逐投票':
+                msg = room.start_exile_vote(pk_mode=False)
+                if msg:
+                    current_user.send_msg(msg)
+            elif action == '放逐PK投票':
+                msg = room.start_exile_vote(pk_mode=True)
+                if msg:
+                    current_user.send_msg(msg)
+
         # === 夜晚行动处理（调用 role_instance） ===
         if current_user.role_instance:
             current_user.role_instance.handle_inputs(data)
 
         # === 上警与发言 ===
         if data.get('sheriff_vote'):
-            current_user.skill['sheriff_vote'] = data.get('sheriff_vote')
-            current_user.skill['sheriff_voted'] = True  # 标记已投票
+            room.record_sheriff_choice(current_user, data.get('sheriff_vote'))
             # 取消倒计时
             task = current_user.skill.pop('countdown_task', None)
             if task:
                 task.cancel()
             # 不需要skip，直接继续循环刷新界面
 
+        if data.get('sheriff_withdraw'):
+            msg = room.handle_sheriff_withdraw(current_user)
+            if msg:
+                current_user.send_msg(msg)
+
+        if data.get('sheriff_ballot'):
+            selection = data.get('sheriff_ballot')
+            target = '弃票' if selection == '弃票' else selection.split('.', 1)[-1].strip()
+            room.record_sheriff_ballot(current_user, target)
+            task = current_user.skill.pop('countdown_task', None)
+            if task:
+                task.cancel()
+
+        if data.get('last_word_skill'):
+            room.handle_last_word_skill_choice(current_user, data.get('last_word_skill'))
+            task = current_user.skill.pop('countdown_task', None)
+            if task:
+                task.cancel()
+
+        if data.get('last_word_done'):
+            room.complete_last_word_speech(current_user)
+            task = current_user.skill.pop('countdown_task', None)
+            if task:
+                task.cancel()
+
+        if data.get('exile_vote'):
+            selection = data.get('exile_vote')
+            target = '弃票' if selection == '弃票' else selection.split('.', 1)[-1].strip()
+            room.record_exile_vote(current_user, target)
+            task = current_user.skill.pop('countdown_task', None)
+            if task:
+                task.cancel()
+
         if data.get('speech_done') and current_user.nick == room.current_speaker:
             current_user.skip()
-
-        # === 公布死亡 ===
-        if data.get('publish_death') and current_user is room.get_host():
-            death_list = room.death_pending
-            death_msg = "无人" if not death_list else "，".join(death_list)
-            room.broadcast_msg(f'昨夜 {death_msg} 出局', tts=True)
-            room.death_pending = []  # 清空
-            room.stage = GameStage.Day
-            room.broadcast_msg('现在开始投票')
+            if room.stage == GameStage.SPEECH:
+                room.advance_sheriff_speech(current_user.nick)
+            elif room.stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
+                room.advance_exile_speech()
 
         # 防止按钮闪烁
         await asyncio.sleep(0.3)

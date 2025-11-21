@@ -59,6 +59,8 @@ class Room:
     current_speaker: Optional[str] = None
     sheriff_speakers: Optional[List[str]] = None
     sheriff_speaker_index: int = 0
+    sheriff_state: Dict[str, Any] = field(default_factory=dict)
+    day_state: Dict[str, Any] = field(default_factory=dict)
 
     async def start_game(self):
         if self.started or len(self.players) < len(self.roles):
@@ -254,10 +256,19 @@ class Room:
         self.death_pending = dead_this_night
         self.broadcast_msg('天亮请睁眼', tts=True)
         await asyncio.sleep(2)
-        self.stage = GameStage.Day
         if self.round == 1:
             self.stage = GameStage.SHERIFF
             self.broadcast_msg('进行警上竞选', tts=True)
+            self.init_sheriff_phase()
+            while self.sheriff_state.get('phase') != 'done':
+                await asyncio.sleep(0.5)
+        else:
+            self.prepare_day_phase()
+
+        while not self.day_state:
+            await asyncio.sleep(0.2)
+        while self.day_state.get('phase') != 'done':
+            await asyncio.sleep(0.5)
 
     async def wait_for_player(self):
         timeout = 20
@@ -363,6 +374,571 @@ class Room:
         if player.role in (Role.HUNTER, Role.WOLF_KING) and player.skill.get('can_shoot', False):
             player.send_msg('你被投票出局，立即开枪！')
 
+    # -------------------- 警长阶段逻辑 --------------------
+    def init_sheriff_phase(self):
+        state = {
+            'phase': 'signup',
+            'up': [],
+            'down': [],
+            'withdrawn': [],
+            'order_dir': None,
+            'speech_queue': [],
+            'pk_order_dir': None,
+            'pk_candidates': [],
+            'eligible_voters': [],
+            'vote_records': {},
+        }
+        self.sheriff_state = state
+        for user in self.players.values():
+            user.skill['sheriff_vote'] = None
+            user.skill['sheriff_voted'] = False
+            user.skill['sheriff_withdrawn'] = False
+            user.skill['sheriff_has_balloted'] = False
+            user.skill['sheriff_vote_pending'] = False
+            user.skill['sheriff_ballot_choice'] = None
+
+    def _is_alive(self, nick: str) -> bool:
+        player = self.players.get(nick)
+        return bool(player and player.status == PlayerStatus.ALIVE)
+
+    def _alive_nicks(self) -> List[str]:
+        return [u.nick for u in self.list_alive_players()]
+
+    def _format_label(self, nick: str) -> str:
+        player = self.players.get(nick)
+        if not player:
+            return nick
+        seat = player.seat or '?'
+        return f"{seat}号{player.nick}"
+
+    def get_active_sheriff_candidates(self) -> List[str]:
+        state = self.sheriff_state or {}
+        if not state:
+            return []
+        base = state.get('pk_candidates') if state.get('phase') in ('pk_speech', 'await_pk_vote', 'pk_vote') and state.get('pk_candidates') else state.get('up', [])
+        active = [nick for nick in base if nick not in state.get('withdrawn', []) and self._is_alive(nick)]
+        return active
+
+    def record_sheriff_choice(self, user: User, choice: str):
+        state = self.sheriff_state or {}
+        if state.get('phase') != 'signup':
+            return
+        if choice not in ('上警', '不上警'):
+            return
+
+        user.skill['sheriff_vote'] = choice
+        user.skill['sheriff_voted'] = True
+
+        for bucket in ('up', 'down'):
+            if user.nick in state[bucket]:
+                state[bucket].remove(user.nick)
+
+        target_bucket = 'up' if choice == '上警' else 'down'
+        state[target_bucket].append(user.nick)
+
+        alive = self._alive_nicks()
+        if all(self.players[n].skill.get('sheriff_voted', False) for n in alive):
+            up_list = state['up']
+            msg = '上警的玩家有：' + ('、'.join(self._format_label(n) for n in up_list) if up_list else '无人')
+            self.broadcast_msg(msg)
+            if up_list:
+                self.start_sheriff_speeches()
+            else:
+                self.broadcast_msg('无人上警，跳过警长竞选')
+                self.finish_sheriff_phase(None)
+
+    def start_sheriff_speeches(self):
+        state = self.sheriff_state or {}
+        candidates = self.get_active_sheriff_candidates()
+        if not candidates:
+            self.finish_sheriff_phase(None)
+            return
+
+        state['phase'] = 'speech'
+        state['order_dir'] = random.choice(['asc', 'desc'])
+        reverse = state['order_dir'] == 'desc'
+        ordered = sorted(candidates, key=lambda nick: self.players[nick].seat or 0, reverse=reverse)
+        start_idx = random.randrange(len(ordered))
+        queue = ordered[start_idx:] + ordered[:start_idx]
+        state['speech_queue'] = queue
+        self.stage = GameStage.SPEECH
+        self.current_speaker = queue[0]
+        self._announce_next_speaker(is_pk=False)
+
+    def _announce_next_speaker(self, is_pk: bool):
+        state = self.sheriff_state or {}
+        queue = state.get('speech_queue', [])
+        if not queue:
+            return
+        current = queue[0]
+        upcoming = queue[1] if len(queue) > 1 else None
+        order_dir = state['pk_order_dir'] if is_pk else state.get('order_dir')
+        order_label = '逆序' if order_dir == 'desc' else '顺序'
+        if is_pk:
+            prefix = '进行平票PK发言'
+        else:
+            prefix = '进行警长竞选发言'
+        if upcoming:
+            self.broadcast_msg(f"{prefix}，请{self._format_label(current)}发言，{order_label}发言顺序，{self._format_label(upcoming)}请准备。")
+        else:
+            self.broadcast_msg(f"{prefix}，请{self._format_label(current)}发言，{order_label}发言顺序。")
+
+    def advance_sheriff_speech(self, finished_nick: str):
+        state = self.sheriff_state or {}
+        if state.get('phase') not in ('speech', 'pk_speech'):
+            return
+        if finished_nick != self.current_speaker:
+            return
+        queue = state.get('speech_queue', [])
+        if queue and queue[0] == finished_nick:
+            queue.pop(0)
+
+        if queue:
+            self.current_speaker = queue[0]
+            self._announce_next_speaker(is_pk=state.get('phase') == 'pk_speech')
+            return
+
+        self.current_speaker = None
+        self.stage = GameStage.SHERIFF
+        if state.get('phase') == 'speech':
+            state['phase'] = 'await_vote'
+            self.broadcast_msg('所有上警玩家发言完毕，等待房主发起投票')
+        else:
+            state['phase'] = 'await_pk_vote'
+            self.broadcast_msg('PK 玩家发言完毕，等待房主发起PK投票')
+
+    def handle_sheriff_withdraw(self, user: User) -> Optional[str]:
+        state = self.sheriff_state or {}
+        if state.get('phase') not in ('speech', 'await_vote', 'pk_speech', 'await_pk_vote'):
+            return '当前不可退水'
+        candidates = self.get_active_sheriff_candidates()
+        if user.nick not in candidates:
+            return '你当前不在竞选名单'
+        if user.nick in state.get('withdrawn', []):
+            return '你已经退水'
+        state['withdrawn'].append(user.nick)
+        user.skill['sheriff_withdrawn'] = True
+        self.broadcast_msg(f"{self._format_label(user.nick)}退水")
+        queue = state.get('speech_queue', [])
+        if user.nick in queue:
+            queue[:] = [n for n in queue if n != user.nick]
+            if self.current_speaker == user.nick:
+                self.advance_sheriff_speech(user.nick)
+        self._check_auto_elect()
+        return None
+
+    def _check_auto_elect(self):
+        state = self.sheriff_state or {}
+        if state.get('phase') not in ('speech', 'await_vote'):
+            return
+        candidates = self.get_active_sheriff_candidates()
+        if len(candidates) == 1:
+            self._declare_sheriff(candidates[0])
+
+    def start_sheriff_vote(self, pk_mode: bool = False) -> Optional[str]:
+        state = self.sheriff_state or {}
+        expected_phase = 'await_pk_vote' if pk_mode else 'await_vote'
+        target_phase = 'pk_vote' if pk_mode else 'vote'
+        if state.get('phase') != expected_phase:
+            return '当前无法发起投票'
+
+        candidates = self.get_active_sheriff_candidates()
+        if not candidates:
+            self.broadcast_msg('无人可供投票，警长竞选结束')
+            self.finish_sheriff_phase(None)
+            return None
+
+        if pk_mode:
+            state['pk_candidates'] = candidates
+            eligible = [u.nick for u in self.list_alive_players() if u.nick not in candidates]
+            prompt = '请非PK玩家在10秒内完成PK投票'
+        else:
+            eligible = [nick for nick in state.get('down', []) if self._is_alive(nick)]
+            prompt = '不上警玩家请在10秒内完成投票'
+
+        state['eligible_voters'] = eligible
+        state['vote_records'] = {}
+        state['phase'] = target_phase
+
+        for voter in eligible:
+            player = self.players.get(voter)
+            if player:
+                player.skill['sheriff_has_balloted'] = False
+                player.skill['sheriff_vote_pending'] = True
+
+        self.broadcast_msg(prompt)
+        if not eligible:
+            self.finish_sheriff_vote()
+        return None
+
+    def record_sheriff_ballot(self, user: User, target: str):
+        state = self.sheriff_state or {}
+        if state.get('phase') not in ('vote', 'pk_vote'):
+            return
+        if user.nick not in state.get('eligible_voters', []):
+            return
+        if user.skill.get('sheriff_has_balloted'):
+            return
+
+        valid_targets = self.get_active_sheriff_candidates()
+        if target not in valid_targets and target != '弃票':
+            user.send_msg('无效投票目标')
+            return
+
+        user.skill['sheriff_has_balloted'] = True
+        user.skill['sheriff_vote_pending'] = False
+        user.skill['sheriff_ballot_choice'] = target
+        state.setdefault('vote_records', {}).setdefault(target, []).append(user.nick)
+
+        eligible = [nick for nick in state.get('eligible_voters', []) if self._is_alive(nick)]
+        if all(self.players[n].skill.get('sheriff_has_balloted') for n in eligible):
+            self.finish_sheriff_vote()
+
+    def finish_sheriff_vote(self):
+        state = self.sheriff_state or {}
+        if state.get('phase') not in ('vote', 'pk_vote'):
+            return
+
+        candidates = self.get_active_sheriff_candidates()
+        vote_records = state.get('vote_records', {})
+        for nick in candidates:
+            voters = vote_records.get(nick, [])
+            seats = '、'.join(self._format_label(v) for v in voters) if voters else '无'
+            self.broadcast_msg(f"{self._format_label(nick)}得票：{seats}")
+        abstain = vote_records.get('弃票', [])
+        if abstain:
+            seats = '、'.join(self._format_label(v) for v in abstain)
+            self.broadcast_msg(f"弃票：{seats}")
+
+        # 统计结果
+        tally = {nick: len(vote_records.get(nick, [])) for nick in candidates}
+        if not tally:
+            self.broadcast_msg('无人投票，警长竞选流拍')
+            self.finish_sheriff_phase(None)
+            return
+
+        max_votes = max(tally.values())
+        winners = [nick for nick, count in tally.items() if count == max_votes]
+
+        phase = state.get('phase')
+        if phase == 'vote':
+            if len(winners) == 1:
+                self._declare_sheriff(winners[0])
+            else:
+                state['phase'] = 'pk_setup'
+                state['pk_candidates'] = winners
+                self.start_pk_speech()
+        else:
+            if len(winners) == 1:
+                self._declare_sheriff(winners[0])
+            else:
+                self.broadcast_msg('PK 投票仍然平票，无人当选警长，警徽流失')
+                self.finish_sheriff_phase(None)
+
+    def start_pk_speech(self):
+        state = self.sheriff_state or {}
+        candidates = [nick for nick in state.get('pk_candidates', []) if self._is_alive(nick)]
+        if not candidates:
+            self.finish_sheriff_phase(None)
+            return
+        base_dir = state.get('order_dir') or 'asc'
+        state['pk_order_dir'] = 'desc' if base_dir == 'asc' else 'asc'
+        reverse = state['pk_order_dir'] == 'desc'
+        ordered = sorted(candidates, key=lambda nick: self.players[nick].seat or 0, reverse=reverse)
+        state['speech_queue'] = ordered
+        state['phase'] = 'pk_speech'
+        self.stage = GameStage.SPEECH
+        self.current_speaker = ordered[0]
+        names = '、'.join(self._format_label(nick) for nick in ordered)
+        self.broadcast_msg(f"{names} 进入平票PK。")
+        self._announce_next_speaker(is_pk=True)
+
+    def _declare_sheriff(self, nick: str):
+        player = self.players.get(nick)
+        if not player:
+            self.finish_sheriff_phase(None)
+            return
+        self.broadcast_msg(f"{self._format_label(nick)}当选警长，请警长选择发言顺序。", tts=True)
+        self.skill['sheriff_captain'] = nick
+        self.finish_sheriff_phase(nick)
+
+    def finish_sheriff_phase(self, winner: Optional[str]):
+        state = self.sheriff_state or {}
+        state['phase'] = 'done'
+        self.current_speaker = None
+        if self.stage != GameStage.Day:
+            self.stage = GameStage.Day
+        for user in self.players.values():
+            user.skill['sheriff_vote_pending'] = False
+        if not self.day_state:
+            self.prepare_day_phase()
+
+    # -------------------- 白天阶段逻辑 --------------------
+    def prepare_day_phase(self):
+        self.stage = GameStage.Day
+        self.day_state = {
+            'phase': 'announcement',
+            'last_words_queue': list(self.death_pending),
+            'current_last_word': None,
+            'last_words_allow_speech': True,
+            'after_last_words': 'exile_speech',
+            'exile_speech_queue': [],
+            'vote_candidates': [],
+            'eligible_voters': [],
+            'vote_records': {},
+            'pk_candidates': [],
+            'pending_execution': None,
+        }
+        self.broadcast_msg('请房主公布昨夜信息')
+
+    def publish_night_info(self) -> Optional[str]:
+        state = self.day_state or {}
+        if state.get('phase') != 'announcement':
+            return '当前不需要公布'
+        death_list = self.death_pending
+        if not death_list:
+            self.broadcast_msg('昨夜平安夜')
+        else:
+            seats = '，'.join(f"{self._format_label(nick)}" for nick in death_list)
+            self.broadcast_msg(f'昨夜出局：{seats}')
+        self.death_pending = []
+
+        if death_list:
+            allow_speech = self.round == 1
+            self.start_last_words(death_list, allow_speech=allow_speech, after_stage='exile_speech')
+        else:
+            self.start_exile_speech()
+
+    def start_last_words(self, queue: List[str], allow_speech: bool, after_stage: str):
+        valid_queue = [nick for nick in queue if nick in self.players]
+        if not valid_queue:
+            if after_stage == 'exile_speech':
+                self.start_exile_speech()
+            elif after_stage == 'end_day':
+                self.end_day_phase()
+            return
+        self.day_state['phase'] = 'last_words'
+        self.day_state['last_words_queue'] = valid_queue
+        self.day_state['current_last_word'] = valid_queue[0]
+        self.day_state['last_words_allow_speech'] = allow_speech
+        self.day_state['after_last_words'] = after_stage
+        self.stage = GameStage.LAST_WORDS
+        for nick in valid_queue:
+            player = self.players.get(nick)
+            if not player:
+                continue
+            player.skill['last_words_skill_resolved'] = False
+            player.skill['last_words_done'] = False
+            player.skill['pending_last_skill'] = False
+        self.broadcast_msg(f"{self._format_label(valid_queue[0])}准备遗言/技能阶段")
+
+    def handle_last_word_skill_choice(self, user: User, choice: str):
+        if self.day_state.get('phase') != 'last_words':
+            return
+        if user.nick != self.day_state.get('current_last_word'):
+            return
+        if choice == '发动技能':
+            user.skill['pending_last_skill'] = True
+        else:
+            user.skill['pending_last_skill'] = False
+            user.skill['last_words_skill_resolved'] = True
+            self._advance_last_words_if_ready(user)
+
+    def complete_last_word_speech(self, user: User):
+        if self.day_state.get('phase') != 'last_words':
+            return
+        if user.nick != self.day_state.get('current_last_word'):
+            return
+        user.skill['last_words_done'] = True
+        self._advance_last_words_if_ready(user)
+
+    def _advance_last_words_if_ready(self, user: User):
+        allow_speech = self.day_state.get('last_words_allow_speech', True)
+        if not user.skill.get('last_words_skill_resolved', False):
+            return
+        if allow_speech and not user.skill.get('last_words_done', False):
+            return
+        queue = self.day_state.get('last_words_queue', [])
+        if queue and queue[0] == user.nick:
+            queue.pop(0)
+        if queue:
+            self.day_state['current_last_word'] = queue[0]
+            self.broadcast_msg(f"{self._format_label(queue[0])}准备遗言/技能阶段")
+            player = self.players.get(queue[0])
+            if player:
+                player.skill['last_words_skill_resolved'] = False
+                player.skill['last_words_done'] = False
+                player.skill['pending_last_skill'] = False
+        else:
+            next_stage = self.day_state.get('after_last_words')
+            if next_stage == 'exile_speech':
+                self.start_exile_speech()
+            elif next_stage == 'end_day':
+                exec_target = self.day_state.get('pending_execution')
+                if exec_target:
+                    player = self.players.get(exec_target)
+                    if player:
+                        player.status = PlayerStatus.DEAD
+                self.end_day_phase()
+
+    def start_exile_speech(self):
+        alive = sorted(self.list_alive_players(), key=lambda u: u.seat or 0)
+        queue = [u.nick for u in alive]
+        if not queue:
+            self.end_day_phase()
+            return
+        self.day_state['phase'] = 'exile_speech'
+        self.day_state['exile_speech_queue'] = queue
+        self.stage = GameStage.EXILE_SPEECH
+        self.current_speaker = queue[0]
+        self._announce_exile_speaker(False)
+
+    def _announce_exile_speaker(self, pk: bool):
+        queue = self.day_state.get('exile_speech_queue', [])
+        if not queue:
+            return
+        current = queue[0]
+        upcoming = queue[1] if len(queue) > 1 else None
+        prefix = '放逐PK发言' if pk else '放逐发言阶段'
+        if upcoming:
+            self.broadcast_msg(f"{prefix}，请{self._format_label(current)}发言，{self._format_label(upcoming)}请准备。")
+        else:
+            self.broadcast_msg(f"{prefix}，请{self._format_label(current)}发言。")
+
+    def advance_exile_speech(self):
+        if self.day_state.get('phase') not in ('exile_speech', 'exile_pk_speech'):
+            return
+        queue = self.day_state.get('exile_speech_queue', [])
+        if queue:
+            queue.pop(0)
+        if queue:
+            self.current_speaker = queue[0]
+            self._announce_exile_speaker(self.day_state.get('phase') == 'exile_pk_speech')
+        else:
+            self.current_speaker = None
+            if self.day_state.get('phase') == 'exile_speech':
+                self.day_state['phase'] = 'await_exile_vote'
+                self.stage = GameStage.Day
+                self.broadcast_msg('放逐发言结束，等待房主发起放逐投票')
+            else:
+                self.day_state['phase'] = 'await_exile_pk_vote'
+                self.stage = GameStage.Day
+                self.broadcast_msg('PK 发言结束，等待房主发起放逐PK投票')
+
+    def start_exile_vote(self, pk_mode: bool = False) -> Optional[str]:
+        phase = self.day_state.get('phase')
+        if pk_mode and phase != 'await_exile_pk_vote':
+            return '当前无法发起PK投票'
+        if not pk_mode and phase != 'await_exile_vote':
+            return '当前无法发起放逐投票'
+        if pk_mode:
+            candidates = [nick for nick in self.day_state.get('pk_candidates', []) if self._is_alive(nick)]
+            eligible = [u.nick for u in self.list_alive_players() if u.nick not in candidates]
+            stage = GameStage.EXILE_PK_VOTE
+            new_phase = 'exile_pk_vote'
+        else:
+            candidates = [u.nick for u in self.list_alive_players()]
+            eligible = [u.nick for u in self.list_alive_players()]
+            stage = GameStage.EXILE_VOTE
+            new_phase = 'exile_vote'
+        if not candidates or not eligible:
+            return '当前无法完成投票'
+        self.day_state['vote_candidates'] = candidates
+        self.day_state['eligible_voters'] = eligible
+        self.day_state['vote_records'] = {}
+        self.day_state['phase'] = new_phase
+        self.stage = stage
+        for nick in eligible:
+            player = self.players.get(nick)
+            if player:
+                player.skill['exile_has_balloted'] = False
+                player.skill['exile_vote_pending'] = True
+        self.broadcast_msg('放逐投票进行中，请在10秒内完成选择')
+
+    def record_exile_vote(self, user: User, target: str):
+        phase = self.day_state.get('phase')
+        if phase not in ('exile_vote', 'exile_pk_vote'):
+            return
+        if user.nick not in self.day_state.get('eligible_voters', []):
+            return
+        if user.skill.get('exile_has_balloted'):
+            return
+        valid_targets = self.day_state.get('vote_candidates', [])
+        if target not in valid_targets and target != '弃票':
+            user.send_msg('无效投票')
+            return
+        user.skill['exile_has_balloted'] = True
+        user.skill['exile_vote_pending'] = False
+        self.day_state.setdefault('vote_records', {}).setdefault(target, []).append(user.nick)
+        eligible = [nick for nick in self.day_state.get('eligible_voters', []) if self._is_alive(nick)]
+        if all(self.players[n].skill.get('exile_has_balloted') for n in eligible):
+            self.finish_exile_vote()
+
+    def finish_exile_vote(self):
+        phase = self.day_state.get('phase')
+        if phase not in ('exile_vote', 'exile_pk_vote'):
+            return
+        candidates = self.day_state.get('vote_candidates', [])
+        records = self.day_state.get('vote_records', {})
+        for nick in candidates:
+            voters = records.get(nick, [])
+            seats = '、'.join(self._format_label(v) for v in voters) if voters else '无'
+            self.broadcast_msg(f"{self._format_label(nick)}得票：{seats}")
+        abstain = records.get('弃票', [])
+        if abstain:
+            seats = '、'.join(self._format_label(v) for v in abstain)
+            self.broadcast_msg(f"弃票：{seats}")
+        tally = {nick: len(records.get(nick, [])) for nick in candidates}
+        if not tally:
+            self.broadcast_msg('无人投票，白天结束')
+            self.end_day_phase()
+            return
+        max_votes = max(tally.values())
+        winners = [nick for nick, cnt in tally.items() if cnt == max_votes]
+        if len(winners) == 1:
+            self.start_execution_sequence(winners[0])
+        else:
+            if phase == 'exile_vote':
+                self.day_state['pk_candidates'] = winners
+                self.start_exile_pk_speech()
+            else:
+                self.broadcast_msg('PK 投票仍旧平票，无人出局')
+                self.end_day_phase()
+
+    def start_exile_pk_speech(self):
+        candidates = [nick for nick in self.day_state.get('pk_candidates', []) if self._is_alive(nick)]
+        if not candidates:
+            self.end_day_phase()
+            return
+        ordered = sorted(candidates, key=lambda nick: self.players[nick].seat or 0)
+        self.day_state['phase'] = 'exile_pk_speech'
+        self.day_state['exile_speech_queue'] = ordered
+        self.stage = GameStage.EXILE_PK_SPEECH
+        self.current_speaker = ordered[0]
+        self._announce_exile_speaker(True)
+
+    def start_execution_sequence(self, nick: str):
+        target = self.players.get(nick)
+        if not target:
+            self.end_day_phase()
+            return
+        target.status = PlayerStatus.PENDING_DEAD
+        self.day_state['pending_execution'] = nick
+        self.broadcast_msg(f"{self._format_label(nick)}被放逐，进入被动技能与遗言阶段")
+        self.start_last_words([nick], allow_speech=True, after_stage='end_day')
+
+    def end_day_phase(self):
+        self.day_state['phase'] = 'done'
+        self.day_state['pending_execution'] = None
+        self.stage = GameStage.Day
+        self.broadcast_msg('白天结束，进入夜晚')
+        for user in self.players.values():
+            user.skill['exile_vote_pending'] = False
+            user.skill['exile_has_balloted'] = False
+            user.skill['last_words_skill_resolved'] = False
+            user.skill['last_words_done'] = False
+            user.skill['pending_last_skill'] = False
+
     @classmethod
     def get(cls, room_id) -> Optional['Room']:
         return Global.get_room(room_id)
@@ -398,6 +974,7 @@ class Room:
                 logic_thread=None,
                 game_over=False,
                 death_pending=[],
+                day_state=dict(),
                 current_speaker=None,
                 sheriff_speakers=None,
                 sheriff_speaker_index=0,
