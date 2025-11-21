@@ -9,6 +9,14 @@ class Witch(RoleBase):
     name = '女巫'
     team = '好人阵营'
     can_act_at_night = True
+    needs_global_confirm = False
+
+    def input_handlers(self):
+        return {
+            'witch_heal_confirm': self.heal_player,
+            'witch_poison_op': self.select_poison_target,
+            'witch_poison_confirm': self.confirm_poison
+        }
 
     def should_act(self) -> bool:
         room = self.user.room
@@ -28,6 +36,10 @@ class Witch(RoleBase):
         pending_targets = room.list_pending_kill_players()
         pending_seats = ', '.join(str(u.seat) for u in pending_targets) if pending_targets else ''
         inputs: List = []
+
+        if not self.user.skill.get('witch_stage_ready', False):
+            self.user.skill['witch_action_notified'] = False
+            self.user.skill['witch_stage_ready'] = True
 
         # 解药：仅当有解药时才显示
         if self.has_heal():
@@ -125,6 +137,7 @@ class Witch(RoleBase):
         else:
             self.user.send_msg('今晚，你尝试使用解药，但无人需要')
         self.user.skill['witch_action_notified'] = True
+        self.user.skill.pop('witch_stage_ready', None)
         return True
     
     @player_action
@@ -174,6 +187,7 @@ class Witch(RoleBase):
         seat = target.seat if target else '?'
         self.user.send_msg(f'今晚，你对{seat}号玩家使用毒药')
         self.user.skill['witch_action_notified'] = True
+        self.user.skill.pop('witch_stage_ready', None)
         return True
 
     @player_action
@@ -181,4 +195,5 @@ class Witch(RoleBase):
         if not self.user.skill.get('witch_action_notified', False):
             self.user.send_msg('今晚，你没有操作')
             self.user.skill['witch_action_notified'] = True
+        self.user.skill.pop('witch_stage_ready', None)
 

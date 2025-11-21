@@ -10,6 +10,9 @@ class Wolf(RoleBase):
     team = '狼人阵营'
     can_act_at_night = True
 
+    def input_handlers(self):
+        return {'wolf_team_op': self.kill_player}
+
     def should_act(self) -> bool:
         room = self.user.room
         return (

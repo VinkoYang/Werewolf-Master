@@ -10,6 +10,9 @@ class Seer(RoleBase):
     team = '好人阵营'
     can_act_at_night = True
 
+    def input_handlers(self):
+        return {'seer_team_op': self.identify_player}
+
     def should_act(self) -> bool:
         room = self.user.room
         return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.SEER and not self.user.skill.get('acted_this_stage', False)

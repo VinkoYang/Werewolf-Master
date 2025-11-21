@@ -1,4 +1,5 @@
 # roles/base.py
+import inspect
 from typing import Optional, List
 from pywebio.input import actions
 from utils import add_cancel_button
@@ -30,6 +31,7 @@ class RoleBase:
     team: str = None
     can_act_at_night: bool = False
     can_act_at_day: bool = False
+    needs_global_confirm: bool = True
 
     def __init__(self, user: User):
         self.user = user
@@ -43,6 +45,37 @@ class RoleBase:
     def get_actions(self) -> List:
         """返回该角色在当前阶段应显示的 input 控件列表"""
         return []
+
+    def input_handlers(self) -> dict:
+        """返回 {input_name: handler} 映射，用于集中处理表单数据"""
+        return {}
+
+    def handle_inputs(self, data: dict):
+        for key, handler in self.input_handlers().items():
+            if key not in data:
+                continue
+            value = data.get(key)
+            if value is None or handler is None:
+                continue
+
+            try:
+                sig = inspect.signature(handler)
+                params = sig.parameters.values()
+                takes_args = any(
+                    p.kind in (
+                        inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        inspect.Parameter.VAR_POSITIONAL
+                    )
+                    for p in params
+                )
+            except (TypeError, ValueError):
+                takes_args = True
+
+            if takes_args:
+                handler(value)
+            else:
+                handler()
 
     @player_action
     def skip(self):

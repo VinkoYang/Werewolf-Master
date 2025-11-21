@@ -153,7 +153,11 @@ async def main():
                 # 仅在有玩家操作时（夜晚阶段）追加确认键
                 # 避免重复添加：只在 user_ops 非空且为夜间角色时加入确认
                 try:
-                    if current_user.role_instance and current_user.role_instance.can_act_at_night:
+                    if (
+                        current_user.role_instance and
+                        current_user.role_instance.can_act_at_night and
+                        current_user.role_instance.needs_global_confirm
+                    ):
                         ops = ops + [actions(name='confirm_action', buttons=['确认'], help_text='确认当前选择（20秒内）')]
                 except Exception:
                     pass
@@ -190,20 +194,21 @@ async def main():
                                 user.skill['sheriff_vote'] = '不上警'
                                 user.skill['sheriff_voted'] = True
                         else:
-                            # 夜间阶段
-                            pending_keys = [
-                                'wolf_choice', 'pending_witch_action', 'pending_protect',
-                                'pending_dream_target', 'pending_target'
-                            ]
+                            pending_keys = ['wolf_choice', 'pending_protect', 'pending_dream_target', 'pending_target']
                             has_pending = any(user.skill.get(k) for k in pending_keys)
 
-                            if has_pending and user.role_instance and hasattr(user.role_instance, 'confirm'):
-                                try:
-                                    user.role_instance.confirm()
-                                except Exception:
-                                    pass
+                            if user.role_instance and user.role_instance.needs_global_confirm and hasattr(user.role_instance, 'confirm'):
+                                if has_pending:
+                                    try:
+                                        user.role_instance.confirm()
+                                    except Exception:
+                                        pass
+                                else:
+                                    try:
+                                        user.skip()
+                                    except Exception:
+                                        pass
                             else:
-                                # 没有选择 -> 跳过当前玩家动作
                                 try:
                                     user.skip()
                                 except Exception:
@@ -333,25 +338,8 @@ async def main():
                 # 这里可以添加猎人开枪按钮逻辑
 
         # === 夜晚行动处理（调用 role_instance） ===
-        if data.get('wolf_team_op'):
-            current_user.role_instance.kill_player(data.get('wolf_team_op'))
-        if data.get('seer_team_op'):
-            current_user.role_instance.identify_player(data.get('seer_team_op'))
-        
-        # 女巫新界面操作处理
-        if data.get('witch_heal_confirm'):
-            current_user.role_instance.heal_player(data.get('witch_heal_confirm'))
-        if data.get('witch_poison_op'):
-            current_user.role_instance.select_poison_target(data.get('witch_poison_op'))
-        if data.get('witch_poison_confirm'):
-            current_user.role_instance.confirm_poison(data.get('witch_poison_confirm'))
-        
-        if data.get('guard_team_op'):
-            current_user.role_instance.protect_player(data.get('guard_team_op'))
-        if data.get('dreamer_team_op'):
-            current_user.role_instance.select_target(data.get('dreamer_team_op'))
-        if data.get('hunter_confirm'):
-            current_user.role_instance.confirm()
+        if current_user.role_instance:
+            current_user.role_instance.handle_inputs(data)
 
         # === 上警与发言 ===
         if data.get('sheriff_vote'):

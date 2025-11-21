@@ -9,6 +9,10 @@ class Hunter(RoleBase):
     team = '好人阵营'
     can_act_at_night = True  # 夜晚查看枪状态
     can_act_at_day = True  # 可在白天开枪（被投出时）
+    needs_global_confirm = False
+
+    def input_handlers(self):
+        return {'hunter_confirm': self.confirm}
 
     def should_act(self) -> bool:
         room = self.user.room

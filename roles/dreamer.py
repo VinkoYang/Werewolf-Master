@@ -10,6 +10,9 @@ class Dreamer(RoleBase):
     team = '好人阵营'
     can_act_at_night = True
 
+    def input_handlers(self):
+        return {'dreamer_team_op': self.select_target}
+
     def should_act(self) -> bool:
         room = self.user.room
         return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.DREAMER and not self.user.skill.get('acted_this_stage', False)
@@ -45,14 +48,16 @@ class Dreamer(RoleBase):
     def select_target(self, nick: str) -> Optional[str]:
         if nick == '取消':
             return None
-        if nick == self.user.nick:
+        # 解析 "seat. nick" 格式
+        target_nick = nick.split('.', 1)[-1].strip()
+        if target_nick == self.user.nick:
             return '不能选择自己'
-        target = self.user.room.players.get(nick)
+        target = self.user.room.players.get(target_nick)
         if not target or target.status == PlayerStatus.DEAD:
             return '目标已死亡'
 
         # 暂存梦游目标
-        self.user.skill['pending_dream_target'] = nick
+        self.user.skill['pending_dream_target'] = target_nick
         return 'PENDING'
 
     @player_action

@@ -9,6 +9,9 @@ class Guard(RoleBase):
     team = '好人阵营'
     can_act_at_night = True
 
+    def input_handlers(self):
+        return {'guard_team_op': self.protect_player}
+
     def should_act(self) -> bool:
         room = self.user.room
         return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.GUARD and not self.user.skill.get('acted_this_stage', False)
@@ -19,12 +22,19 @@ class Guard(RoleBase):
         room = self.user.room
         current_choice = self.user.skill.get('pending_protect')
 
+        if not self.user.skill.get('guard_stage_ready', False):
+            self.user.skill['guard_action_notified'] = False
+            self.user.skill['guard_stage_ready'] = True
+
         buttons: List = []
-        alive_players = sorted(room.list_alive_players(), key=lambda x: x.seat or 0)
-        for u in alive_players:
+        all_players = sorted(room.players.values(), key=lambda x: x.seat or 0)
+        for u in all_players:
             label = f"{u.seat}. {u.nick}"
             btn = {'label': label, 'value': label}
-            if u.nick == current_choice:
+            if u.status == PlayerStatus.DEAD:
+                btn['disabled'] = True
+                btn['color'] = 'secondary'
+            elif u.nick == current_choice:
                 btn['color'] = 'warning'
             buttons.append(btn)
 
@@ -73,6 +83,7 @@ class Guard(RoleBase):
         seat = target.seat if target else '?'
         self.user.send_msg(f'今晚，你守护了{seat}号玩家')
         self.user.skill['guard_action_notified'] = True
+        self.user.skill.pop('guard_stage_ready', None)
         return True
 
     @player_action
@@ -80,3 +91,4 @@ class Guard(RoleBase):
         if not self.user.skill.get('guard_action_notified', False):
             self.user.send_msg('今晚，你没有操作')
             self.user.skill['guard_action_notified'] = True
+        self.user.skill.pop('guard_stage_ready', None)
