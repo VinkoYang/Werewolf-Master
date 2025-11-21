@@ -116,28 +116,59 @@ class Room:
             user.skill['acted_this_stage'] = False
         self.broadcast_msg('狼人请出现', tts=True)
         await asyncio.sleep(1)
+        
+        # 发送狼队成员信息给所有狼人
+        wolf_players = [u for u in self.players.values() if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE]
+        if wolf_players:
+            wolf_info_parts = []
+            for wolf in wolf_players:
+                if wolf.role == Role.WOLF_KING:
+                    wolf_info_parts.append(f"{wolf.seat}号(狼王)")
+                else:
+                    wolf_info_parts.append(f"{wolf.seat}号")
+            
+            wolf_info = "狼人玩家是：" + "、".join(wolf_info_parts)
+            
+            # 发送给所有狼人
+            for u in wolf_players:
+                self.send_msg(wolf_info, nick=u.nick)
+        
+        await asyncio.sleep(2)
+        
         self.waiting = True
         await self.wait_for_player()
 
         # 统一结算狼人击杀（统计票数，最多票者为今晚被刀）
         wolf_votes = self.skill.get('wolf_votes', {})
+        kill_target = None
+        
         if wolf_votes:
             # 计算每个目标的票数
             counts = {t: len(voters) for t, voters in wolf_votes.items()}
             max_count = max(counts.values())
             candidates = [t for t, c in counts.items() if c == max_count]
-            chosen = random.choice(candidates) if len(candidates) > 1 else candidates[0]
+            
+            # 根据需求3判断：
+            # a. 单个玩家 -> 直接选择
+            # b. 多个玩家最多票 -> 选择最多票的
+            # c. 平票 -> 随机选择
+            if len(candidates) == 1:
+                chosen = candidates[0]
+            else:
+                # 平票情况，随机选择
+                chosen = random.choice(candidates)
+            
             target = self.players.get(chosen)
             if target and target.status == PlayerStatus.ALIVE:
                 target.status = PlayerStatus.PENDING_DEAD
-            # 将被狼选择的信息仅发送给狼人私聊（非公开）
+                kill_target = target
+            
+            # 发送击杀结果给所有狼人（包括未行动的狼人）
+            target_seat = target.seat if target else '?'
             for u in self.players.values():
                 if u.role in (Role.WOLF, Role.WOLF_KING):
-                    try:
-                        # 显式调用 room.send_msg，确保消息被标记为私聊（recipient = u.nick）
-                        self.send_msg(f"狼人选择了 {chosen}", nick=u.nick)
-                    except Exception:
-                        pass
+                    self.send_msg(f"今夜，狼队选择{target_seat}号玩家被击杀。", nick=u.nick)
+            
             # 清理投票记录
             if 'wolf_votes' in self.skill:
                 del self.skill['wolf_votes']
@@ -145,15 +176,13 @@ class Room:
             for u in self.players.values():
                 u.skill.pop('wolf_choice', None)
         else:
-            # 狼人空刀也应为狼人私聊信息
+            # d. 所有狼人都没有选择或点击了"放弃" -> 空刀
             for u in self.players.values():
                 if u.role in (Role.WOLF, Role.WOLF_KING):
-                    try:
-                        self.send_msg("狼人空刀", nick=u.nick)
-                    except Exception:
-                        pass
+                    self.send_msg("今夜，狼队空刀。", nick=u.nick)
 
-        await asyncio.sleep(1)
+        # 延迟3秒后再显示"狼人请闭眼"
+        await asyncio.sleep(3)
         self.broadcast_msg('狼人请闭眼', tts=True)
         await asyncio.sleep(2)
 

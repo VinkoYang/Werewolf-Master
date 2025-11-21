@@ -20,12 +20,19 @@ class Seer(RoleBase):
         room = self.user.room
         # 显示所有玩家（包括自己和已出局的），自己和已出局的按钮灰色且不可选
         players = sorted(room.players.values(), key=lambda x: x.seat if x.seat is not None else 0)
+        
+        # 获取当前玩家的临时选择
+        current_choice = self.user.skill.get('pending_target')
+        
         buttons = []
         for u in players:
             label = f"{u.seat}. {u.nick}"
             # 自己或已出局的玩家：灰色且禁用
             if u.nick == self.user.nick or u.status == PlayerStatus.DEAD:
                 buttons.append({'label': label, 'value': label, 'disabled': True, 'color': 'secondary'})
+            # 如果是当前玩家的临时选择，标记为黄色（warning）
+            elif u.nick == current_choice:
+                buttons.append({'label': label, 'value': label, 'color': 'warning'})
             else:
                 buttons.append({'label': label, 'value': label})
         

@@ -19,11 +19,25 @@ class Guard(RoleBase):
             return []
         room = self.user.room
         last = self.user.skill.get('last_protect')
-        buttons = [f"{u.seat}. {u.nick}" for u in room.list_alive_players() if u.nick != last]
+        
+        # 获取当前玩家的临时选择
+        current_choice = self.user.skill.get('pending_protect')
+        
+        buttons = []
+        for u in room.list_alive_players():
+            if u.nick != last:
+                label = f"{u.seat}. {u.nick}"
+                # 如果是当前玩家的临时选择，标记为黄色（warning）
+                if u.nick == current_choice:
+                    buttons.append({'label': label, 'value': label, 'color': 'warning'})
+                else:
+                    buttons.append({'label': label, 'value': label})
+        
+        buttons.append({'label': '取消', 'type': 'cancel'})
         return [
             actions(
                 name='guard_team_op',
-                buttons=add_cancel_button(buttons),
+                buttons=buttons,
                 help_text='守卫，请选择守护对象（不能连续守护同一人）。'
             )
         ]

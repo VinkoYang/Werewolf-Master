@@ -47,14 +47,28 @@ class Witch(RoleBase):
             self.user.send_msg('你已经没有药了')
             return []
 
-        alive_buttons = [f"{u.seat}. {u.nick}" for u in room.list_alive_players()]
+        # 获取当前玩家的临时选择
+        pending_action = self.user.skill.get('pending_witch_action')
+        current_choice = pending_action[1] if pending_action else None
+        
+        # 构建按钮列表，添加黄色标记
+        buttons = []
+        for u in room.list_alive_players():
+            label = f"{u.seat}. {u.nick}"
+            # 如果是当前玩家的临时选择，标记为黄色（warning）
+            if u.nick == current_choice:
+                buttons.append({'label': label, 'value': label, 'color': 'warning'})
+            else:
+                buttons.append({'label': label, 'value': label})
+        
+        buttons.append({'label': '取消', 'type': 'cancel'})
 
         # 选择操作后需要确认
         return [
             radio(name='witch_mode', options=mode_options, required=True, inline=True),
             actions(
                 name='witch_team_op',
-                buttons=add_cancel_button(alive_buttons),
+                buttons=buttons,
                 help_text='女巫，请选择你的操作。'
             )
         ]

@@ -18,11 +18,25 @@ class Dreamer(RoleBase):
         if not self.should_act():
             return []
         room = self.user.room
-        buttons = [f"{u.seat}. {u.nick}" for u in room.list_alive_players() if u.nick != self.user.nick]
+        
+        # 获取当前玩家的临时选择
+        current_choice = self.user.skill.get('pending_dream_target')
+        
+        buttons = []
+        for u in room.list_alive_players():
+            if u.nick != self.user.nick:
+                label = f"{u.seat}. {u.nick}"
+                # 如果是当前玩家的临时选择，标记为黄色（warning）
+                if u.nick == current_choice:
+                    buttons.append({'label': label, 'value': label, 'color': 'warning'})
+                else:
+                    buttons.append({'label': label, 'value': label})
+        
+        buttons.append({'label': '取消', 'type': 'cancel'})
         return [
             actions(
                 name='dreamer_team_op',
-                buttons=add_cancel_button(buttons),
+                buttons=buttons,
                 help_text='摄梦人，请选择梦游对象。'
             )
         ]
