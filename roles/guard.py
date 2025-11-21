@@ -1,7 +1,6 @@
 # roles/guard.py
 from typing import Optional, List
 from pywebio.input import actions
-from utils import add_cancel_button
 from .base import RoleBase, player_action
 from enums import PlayerStatus, GameStage, GuardRule
 
@@ -18,27 +17,23 @@ class Guard(RoleBase):
         if not self.should_act():
             return []
         room = self.user.room
-        last = self.user.skill.get('last_protect')
-        
-        # 获取当前玩家的临时选择
         current_choice = self.user.skill.get('pending_protect')
-        
-        buttons = []
-        for u in room.list_alive_players():
-            if u.nick != last:
-                label = f"{u.seat}. {u.nick}"
-                # 如果是当前玩家的临时选择，标记为黄色（warning）
-                if u.nick == current_choice:
-                    buttons.append({'label': label, 'value': label, 'color': 'warning'})
-                else:
-                    buttons.append({'label': label, 'value': label})
-        
+
+        buttons: List = []
+        alive_players = sorted(room.list_alive_players(), key=lambda x: x.seat or 0)
+        for u in alive_players:
+            label = f"{u.seat}. {u.nick}"
+            btn = {'label': label, 'value': label}
+            if u.nick == current_choice:
+                btn['color'] = 'warning'
+            buttons.append(btn)
+
         buttons.append({'label': '取消', 'type': 'cancel'})
         return [
             actions(
                 name='guard_team_op',
                 buttons=buttons,
-                help_text='守卫，请选择守护对象（不能连续守护同一人）。'
+                help_text='守卫，请选择守护对象。'
             )
         ]
 
@@ -46,15 +41,16 @@ class Guard(RoleBase):
     def protect_player(self, nick: str) -> Optional[str]:
         if nick == '取消':
             return None
-        if self.user.skill.get('last_protect') == nick:
-            return '两晚不可守卫同一玩家'
-
-        target = self.user.room.players.get(nick)
+        
+        # 解析昵称：处理 "seat. nick" 格式
+        target_nick = nick.split('.', 1)[-1].strip()
+        
+        target = self.user.room.players.get(target_nick)
         if not target:
             return '查无此人'
 
         # 暂存守护目标，等待确认
-        self.user.skill['pending_protect'] = nick
+        self.user.skill['pending_protect'] = target_nick
         return 'PENDING'
 
     @player_action
@@ -62,8 +58,6 @@ class Guard(RoleBase):
         nick = self.user.skill.pop('pending_protect', None)
         if nick is None:
             return '未选择目标'
-        if self.user.skill.get('last_protect') == nick:
-            return '两晚不可守护同一玩家'
         target = self.user.room.players.get(nick)
         if not target:
             return '查无此人'

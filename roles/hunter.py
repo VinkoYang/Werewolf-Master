@@ -1,5 +1,6 @@
 # roles/hunter.py
-from typing import Optional
+from typing import Optional, List
+from pywebio.input import actions
 from .base import RoleBase, player_action
 from enums import PlayerStatus, GameStage
 
@@ -11,33 +12,34 @@ class Hunter(RoleBase):
 
     def should_act(self) -> bool:
         room = self.user.room
-        return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.HUNTER
+        return (self.user.status != PlayerStatus.DEAD and 
+                room.stage == GameStage.HUNTER and 
+                not self.user.skill.get('acted_this_stage', False))
         
-    def get_actions(self):
-            if self.user.room.stage == GameStage.HUNTER and self.user.skill.get('can_shoot', False):
-                # 猎人开枪行为可被确认
-                return [
-                    actions(name='hunter_team_op', buttons=['开枪', '放弃'], help_text='猎人开枪')
-                ]
+    def get_actions(self) -> List:
+        if not self.should_act():
             return []
-
-    @player_action
-    def gun_status(self) -> Optional[str]:
-        can = self.user.skill.get('can_shoot', True)
-        status = "可以开枪" if can else "无法开枪"
-        self.user.send_msg(f'🔫 你的开枪状态：{status}')
-        return True
-
-    @player_action
-    def kill_confirm(self, nick: str) -> Optional[str]:
-        # 处理开枪按钮（简化：立即开枪或放弃）
-        if nick == '放弃':
-            return None
-        if not self.user.skill.get('can_shoot', False):
-            return '无法开枪'
-        # 标记为已行动并在外层流程处理猎人开枪逻辑（在房间结算时触发）
-        self.user.skill['acted_this_stage'] = True
-        # 可以在此触发立即开枪逻辑（使用现有 send_msg 提示）
-        self.user.send_msg('你选择了开枪（请实现开枪目标选择逻辑）')
-        return True
         
+        # 猎人睡眼时，发送开枪状态私聊消息 - 只发送一次
+        if not self.user.skill.get('hunter_msg_sent', False):
+            can_shoot = self.user.skill.get('can_shoot', True)
+            status_msg = "可以开枪" if can_shoot else "不可以开枪"
+            self.user.send_msg(f'🔫 你的开枪状态：{status_msg}')
+            self.user.skill['hunter_msg_sent'] = True
+        
+        # 添加确认按键
+        return [
+            actions(
+                name='hunter_confirm',
+                buttons=['确认'],
+                help_text='点击确认结束你的回合'
+            )
+        ]
+
+    @player_action
+    def confirm(self) -> Optional[str]:
+        # 猎人夜晚只是查看状态，标记为已行动即可
+        self.user.skill['acted_this_stage'] = True
+        # 清理消息发送标志
+        self.user.skill.pop('hunter_msg_sent', None)
+        return True

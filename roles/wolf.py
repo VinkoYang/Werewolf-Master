@@ -105,7 +105,9 @@ class Wolf(RoleBase):
             for u in room.players.values():
                 if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE:
                     room.send_msg(f"{self.user.seat}号玩家选择放弃", nick=u.nick)
-            return True
+            # 检查是否所有狼人都已行动
+            self._check_all_wolves_acted()
+            return 'PENDING'  # 不立即结束等待
         
         # 登记投票
         votes_map = room.skill.setdefault('wolf_votes', {})
@@ -124,4 +126,15 @@ class Wolf(RoleBase):
             if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE:
                 room.send_msg(f"{self.user.seat}号玩家选择击杀{target_seat}号玩家", nick=u.nick)
         
-        return True
+        # 检查是否所有狼人都已行动
+        self._check_all_wolves_acted()
+        return 'PENDING'  # 不立即结束等待，让其他狼人继续选择
+    
+    def _check_all_wolves_acted(self):
+        """检查是否所有狼人都已行动，如果是则结束等待"""
+        room = self.user.room
+        wolves = [u for u in room.players.values() 
+                 if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE]
+        all_acted = all(u.skill.get('acted_this_stage', False) for u in wolves)
+        if all_acted:
+            room.waiting = False

@@ -343,3 +343,45 @@ hunter.py：将开枪入口适配为支持确认（占位式实现，开枪目�
 
 修复方案：
 移除了状态检查条件，改为只要是狼人角色（Role.WOLF 或 Role.WOLF_KING）就发送消息，无论玩家是否存活或是否已行动。
+
+## 2025-11-21 其他玩家的操作界面优化
+main.py
+
+集成新的女巫操作控件：witch_heal_confirm、witch_poison_op、witch_poison_confirm。
+将猎人确认操作加入 input_group 的动作处理逻辑，确保每个角色的新 UI 能通过统一的输入组提交。
+
+room.py
+
+修复阶段关闭刷新逻辑：每个玩家的会话现在会正确发送取消事件，避免之前的 Output.send()/coro not found 错误。
+保证夜晚阶段结束后所有玩家的 UI 同步更新。
+
+wolf.py
+
+重构 confirm()：狼人阶段保持等待，直到所有存活的狼人行动或超时。
+使用共享投票映射和 _check_all_wolves_acted() 辅助方法。
+广播逻辑仍发送给所有狼人。
+
+seer.py
+
+优化 identify_player：安全解析 "seat. nick" 格式，确保预选按钮正确触发能力。
+
+witch.py
+
+重建女巫操作 UI，移除 put_html，新增：
+
+解药提示，带专用确认按钮和自动消息。
+毒药提示，显示所有玩家按钮，支持禁用/自选/死亡状态，红色高亮，取消支持，独立确认按钮。
+
+
+新增处理函数：heal_player、select_poison_target、confirm_poison。
+增加状态清理，避免重复提示。
+
+guard.py
+
+重设计 UI：显示所有存活玩家（按座位排序），高亮当前选择，允许守护任意存活玩家。
+修复 "seat. nick" 解析逻辑。
+
+hunter.py
+
+增加显式确认操作，猎人确认身份并结束阶段。
+状态消息现在每晚只发送一次。

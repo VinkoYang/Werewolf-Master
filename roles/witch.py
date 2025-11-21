@@ -25,112 +25,144 @@ class Witch(RoleBase):
             return []
 
         room = self.user.room
-        pending = room.list_pending_kill_players()
-        pending_nicks = ', '.join([u.nick for u in pending]) if pending else None
+        pending_targets = room.list_pending_kill_players()
+        pending_seats = ', '.join(str(u.seat) for u in pending_targets) if pending_targets else ''
+        inputs: List = []
 
-        # 提示信息
-        if pending_nicks:
-            self.user.send_msg(f'今夜被杀的是 {pending_nicks}')
-        else:
-            self.user.send_msg('今夜无人被杀')
+        # 解药：仅当有解药时才显示
+        if self.has_heal():
+            if pending_targets:
+                msg = f"今夜{pending_seats}号玩家被杀，是否使用解药？"
+                inputs.append(
+                    actions(
+                        name='witch_heal_confirm',
+                        buttons=[{'label': '确认使用解药', 'value': 'confirm_heal', 'color': 'success'}],
+                        help_text=msg
+                    )
+                )
+            else:
+                # 无人被杀的提示通过私聊发送一次
+                if not self.user.skill.get('witch_no_kill_msg_sent', False):
+                    self.user.send_msg('今夜无人被杀，无法使用解药')
+                    self.user.skill['witch_no_kill_msg_sent'] = True
 
-        # 构建选项
-        heal_btn = self.has_heal()
-        poison_btn = self.has_poison()
+        # 毒药：显示所有玩家按钮
+        if self.has_poison():
+            current_choice = self.user.skill.get('pending_poison_target')
+            buttons = []
+            alive_players = sorted(room.players.values(), key=lambda x: x.seat or 0)
+            for u in alive_players:
+                label = f"{u.seat}. {u.nick}"
+                btn = {'label': label, 'value': label}
+                if u.nick == self.user.nick or u.status == PlayerStatus.DEAD:
+                    btn['disabled'] = True
+                    btn['color'] = 'secondary'
+                elif u.nick == current_choice:
+                    btn['color'] = 'danger'
+                buttons.append(btn)
 
-        mode_options = []
-        if heal_btn:
-            mode_options.append('解药')
-        if poison_btn:
-            mode_options.append('毒药')
-        if not mode_options:
-            self.user.send_msg('你已经没有药了')
+            buttons.append({'label': '不使用毒药', 'value': 'cancel_poison', 'color': 'secondary'})
+            inputs.append(
+                actions(
+                    name='witch_poison_op',
+                    buttons=buttons,
+                    help_text='你有一瓶毒药，你要毒：'
+                )
+            )
+
+            if current_choice:
+                seat = room.players[current_choice].seat if current_choice in room.players else '?'
+                inputs.append(
+                    actions(
+                        name='witch_poison_confirm',
+                        buttons=[{'label': '确认', 'value': 'confirm_poison', 'color': 'danger'}],
+                        help_text=f'确认对 {seat} 号玩家使用毒药？'
+                    )
+                )
+
+        if not self.has_heal() and not self.has_poison():
+            if not self.user.skill.get('witch_no_potion_sent', False):
+                self.user.send_msg('你已经没有药了')
+                self.user.skill['witch_no_potion_sent'] = True
             return []
 
-        # 获取当前玩家的临时选择
-        pending_action = self.user.skill.get('pending_witch_action')
-        current_choice = pending_action[1] if pending_action else None
-        
-        # 构建按钮列表，添加黄色标记
-        buttons = []
-        for u in room.list_alive_players():
-            label = f"{u.seat}. {u.nick}"
-            # 如果是当前玩家的临时选择，标记为黄色（warning）
-            if u.nick == current_choice:
-                buttons.append({'label': label, 'value': label, 'color': 'warning'})
-            else:
-                buttons.append({'label': label, 'value': label})
-        
-        buttons.append({'label': '取消', 'type': 'cancel'})
-
-        # 选择操作后需要确认
-        return [
-            radio(name='witch_mode', options=mode_options, required=True, inline=True),
-            actions(
-                name='witch_team_op',
-                buttons=buttons,
-                help_text='女巫，请选择你的操作。'
-            )
-        ]
+        return inputs
 
     @player_action
-    def heal_player(self, nick: str) -> Optional[str]:
+    def heal_player(self, action: str) -> Optional[str]:
+        """处理确认使用解药按钮"""
+        if action != 'confirm_heal':
+            return None
+        
         room = self.user.room
-        if room.witch_rule == WitchRule.NO_SELF_RESCUE and nick == self.user.nick:
-            return '不能解救自己'
-        if room.witch_rule == WitchRule.SELF_RESCUE_FIRST_NIGHT_ONLY:
-            if nick == self.user.nick and room.round != 1:
-                return '仅第一晚可以解救自己'
-
+        pending = room.list_pending_kill_players()
+        
+        if not pending:
+            return '今夜无人被杀'
+        
         if not self.has_heal():
             return '没有解药了'
-
-        target = room.players.get(nick)
-        if not target:
-            return '查无此人'
-
-        # 只有 PENDING_DEAD 才能救
-        if target.status != PlayerStatus.PENDING_DEAD:
-            return '此人未被刀'
-
-        # 暂存救人选择，等待确认
-        self.user.skill['pending_witch_action'] = ('heal', nick)
-        return 'PENDING'
-
+        
+        # 救所有被杀的玩家（通常只有一个）
+        for target in pending:
+            if room.witch_rule == WitchRule.NO_SELF_RESCUE and target.nick == self.user.nick:
+                return '不能解救自己'
+            if room.witch_rule == WitchRule.SELF_RESCUE_FIRST_NIGHT_ONLY:
+                if target.nick == self.user.nick and room.round != 1:
+                    return '仅第一晚可以解救自己'
+            
+            if target.status == PlayerStatus.PENDING_DEAD:
+                target.status = PlayerStatus.PENDING_HEAL
+        
+        self.user.skill['heal'] = False
+        self.user.skill['acted_this_stage'] = True
+        self.user.skill.pop('witch_heal_msg_sent', None)
+        self.user.skill.pop('witch_no_kill_msg_sent', None)
+        return True
+    
     @player_action
-    def confirm(self) -> Optional[str]:
-        pending = self.user.skill.pop('pending_witch_action', None)
-        if not pending:
-            return '未选择操作'
-        mode, nick = pending
-        target = room.players.get(nick)
-        if not target:
-            return '查无此人'
-        if mode == 'heal':
-            if target.status != PlayerStatus.PENDING_DEAD:
-                return '此人未被刀'
-            target.status = PlayerStatus.PENDING_HEAL
-            self.user.skill['heal'] = False
-            self.user.skill['acted_this_stage'] = True
-            return True
-        elif mode == 'kill':
-            if target.status == PlayerStatus.DEAD:
-                return '目标已死亡'
-            target.status = PlayerStatus.PENDING_POISON
-            self.user.skill['poison'] = False
-            self.user.skill['acted_this_stage'] = True
-            return True
-
-    @player_action
-    def kill_player(self, nick: str) -> Optional[str]:
-        if nick == '取消':
-            return None
+    def select_poison_target(self, nick: str) -> Optional[str]:
+        """选择毒药目标"""
+        if nick in ('不使用毒药', '取消', 'cancel_poison'):
+            self.user.skill.pop('pending_poison_target', None)
+            return 'PENDING'
+        
+        # 解析昵称
+        target_nick = nick.split('.', 1)[-1].strip()
+        
         if not self.has_poison():
             return '没有毒药了'
-        target_nick = nick.split('.', 1)[-1].strip()
+        
         target = self.user.room.players.get(target_nick)
         if not target or target.status == PlayerStatus.DEAD:
             return '目标已死亡'
-        # 暂存毒人选择，等待确认
-        self.user.skill['pending_witch_action'] = ('kill', target_nick)
+        
+        # 暂存毒人目标
+        self.user.skill['pending_poison_target'] = target_nick
         return 'PENDING'
+    
+    @player_action
+    def confirm_poison(self, action: str) -> Optional[str]:
+        """确认使用毒药"""
+        if action != 'confirm_poison':
+            return None
+        
+        target_nick = self.user.skill.pop('pending_poison_target', None)
+        if not target_nick:
+            return '未选择目标'
+        
+        room = self.user.room
+        target = room.players.get(target_nick)
+        if not target:
+            return '查无此人'
+        
+        if target.status == PlayerStatus.DEAD:
+            return '目标已死亡'
+        
+        target.status = PlayerStatus.PENDING_POISON
+        self.user.skill['poison'] = False
+        self.user.skill['acted_this_stage'] = True
+        self.user.skill.pop('witch_heal_msg_sent', None)
+        self.user.skill.pop('witch_no_kill_msg_sent', None)
+        return True
+

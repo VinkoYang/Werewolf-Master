@@ -49,6 +49,8 @@ class Seer(RoleBase):
     def identify_player(self, nick: str) -> Optional[str]:
         if nick == '取消' or nick == '放弃':
             return None
+        
+        # 解析昵称：处理 "seat. nick" 格式
         target_nick = nick.split('.', 1)[-1].strip()
         target = self.user.room.players.get(target_nick)
         if not target:

@@ -191,6 +191,7 @@ class Room:
             (GameStage.SEER, Role.SEER),
             (GameStage.WITCH, Role.WITCH),
             (GameStage.GUARD, Role.GUARD),
+            (GameStage.HUNTER, Role.HUNTER),
             (GameStage.DREAMER, Role.DREAMER),
         ]
 
@@ -199,8 +200,17 @@ class Room:
                 self.stage = stage
                 for user in self.players.values():
                     user.skill['acted_this_stage'] = False
+                    
                 self.broadcast_msg(f'{stage.value}请出现', tts=True)
                 await asyncio.sleep(1)
+                
+                # 女巫阶段：发送私聊信息给女巫
+                if stage == GameStage.WITCH:
+                    for u in self.players.values():
+                        if u.role == Role.WITCH and u.status == PlayerStatus.ALIVE:
+                            # 女巫睡眼信息将在 get_actions 中发送（显示今夜被杀信息）
+                            pass
+                
                 self.waiting = True
                 await self.wait_for_player()
                 await asyncio.sleep(1)
@@ -258,6 +268,26 @@ class Room:
                 self.broadcast_msg("行动超时，系统自动跳过", tts=True)
                 break
             await asyncio.sleep(0.1)
+        
+        # 阶段结束后，刷新所有玩家的界面（取消操作窗口）
+        for user in self.players.values():
+            try:
+                # 取消倒计时任务
+                task = user.skill.pop('countdown_task', None)
+                if task:
+                    task.cancel()
+                # 每个玩家使用自己的session发送取消事件
+                if user.main_task_id and hasattr(user, 'session') and user.session:
+                    try:
+                        user.session.send_client_event({
+                            'event': 'from_cancel',
+                            'task_id': user.main_task_id,
+                            'data': None
+                        })
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
     async def check_game_end(self):
         wolves = [u for u in self.list_alive_players() if u.role in (Role.WOLF, Role.WOLF_KING)]
