@@ -50,7 +50,11 @@ async def main():
     if data['cmd'] == '创建房间':
         # 先显示板子预设选择
         preset_data = await input_group('板子预设', inputs=[
-            actions(name='preset', buttons=['3人测试板子', '自定义配置'], help_text='选择预设或自定义')
+            actions(
+                name='preset',
+                buttons=['3人测试板子', '预女猎守1狼6人测试', '预女猎守2狼7人测试', '自定义配置'],
+                help_text='选择预设或自定义'
+            )
         ])
         
         if preset_data['preset'] == '3人测试板子':
@@ -60,6 +64,24 @@ async def main():
                 'god_wolf': [],
                 'citizen_num': 1,
                 'god_citizen': ['预言家'],
+                'witch_rule': '仅第一夜可自救',
+                'guard_rule': '同时被守被救时，对象死亡'
+            }
+        elif preset_data['preset'] == '预女猎守1狼6人测试':
+            room_config = {
+                'wolf_num': 1,
+                'god_wolf': [],
+                'citizen_num': 1,
+                'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
+                'witch_rule': '仅第一夜可自救',
+                'guard_rule': '同时被守被救时，对象死亡'
+            }
+        elif preset_data['preset'] == '预女猎守2狼7人测试':
+            room_config = {
+                'wolf_num': 2,
+                'god_wolf': [],
+                'citizen_num': 1,
+                'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
                 'witch_rule': '仅第一夜可自救',
                 'guard_rule': '同时被守被救时，对象死亡'
             }
@@ -112,13 +134,15 @@ async def main():
 
             # === 上警阶段：10秒举手 ===
             if room.stage == GameStage.SHERIFF and current_user.status == PlayerStatus.ALIVE:
-                user_ops += [
-                    actions(
-                        name='sheriff_vote',
-                        buttons=['上警', '不上警'],
-                        help_text='请选择是否上警（10秒内，未选视为不上警）'
-                    )
-                ]
+                # 检查是否已经选择过
+                if not current_user.skill.get('sheriff_voted', False):
+                    user_ops += [
+                        actions(
+                            name='sheriff_vote',
+                            buttons=['上警', '不上警'],
+                            help_text='请选择是否上警（10秒内，未选视为不上警）'
+                        )
+                    ]
 
             # === 发言阶段 ===
             if hasattr(room, 'current_speaker') and room.stage == GameStage.SPEECH and current_user.nick == room.current_speaker:
@@ -151,13 +175,22 @@ async def main():
                 # 仅在有玩家操作时（夜晚阶段）追加确认键
                 # 避免重复添加：只在 user_ops 非空且为夜间角色时加入确认
                 try:
-                    if current_user.role_instance and current_user.role_instance.can_act_at_night:
+                    if (
+                        current_user.role_instance and
+                        current_user.role_instance.can_act_at_night and
+                        current_user.role_instance.needs_global_confirm
+                    ):
                         ops = ops + [actions(name='confirm_action', buttons=['确认'], help_text='确认当前选择（20秒内）')]
                 except Exception:
                     pass
 
             # 开启倒计时任务（每个玩家单独）仅在夜间角色可行动时启动
             NIGHT_STAGES = {GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.DREAMER}
+            COUNTDOWN_STAGES = NIGHT_STAGES | {GameStage.SHERIFF}  # 包括上警阶段
+            
+            # 根据阶段决定倒计时时长
+            countdown_seconds = 10 if room.stage == GameStage.SHERIFF else 20
+            
             async def _countdown(user, seconds=20):
                 try:
                     for i in range(seconds, 0, -1):
@@ -176,23 +209,32 @@ async def main():
 
                     try:
                         # 超时时，若玩家已做出临时选择则确认之；否则视为放弃并跳过
-                        pending_keys = [
-                            'wolf_choice', 'pending_witch_action', 'pending_protect',
-                            'pending_dream_target', 'pending_target'
-                        ]
-                        has_pending = any(user.skill.get(k) for k in pending_keys)
-
-                        if has_pending and user.role_instance and hasattr(user.role_instance, 'confirm'):
-                            try:
-                                user.role_instance.confirm()
-                            except Exception:
-                                pass
+                        # 特殊处理：上警阶段
+                        if user.room.stage == GameStage.SHERIFF:
+                            # 上警超时，默认为不上警
+                            if not user.skill.get('sheriff_voted', False):
+                                user.skill['sheriff_vote'] = '不上警'
+                                user.skill['sheriff_voted'] = True
                         else:
-                            # 没有选择 -> 跳过当前玩家动作
-                            try:
-                                user.skip()
-                            except Exception:
-                                pass
+                            pending_keys = ['wolf_choice', 'pending_protect', 'pending_dream_target', 'pending_target']
+                            has_pending = any(user.skill.get(k) for k in pending_keys)
+
+                            if user.role_instance and user.role_instance.needs_global_confirm and hasattr(user.role_instance, 'confirm'):
+                                if has_pending:
+                                    try:
+                                        user.role_instance.confirm()
+                                    except Exception:
+                                        pass
+                                else:
+                                    try:
+                                        user.skip()
+                                    except Exception:
+                                        pass
+                            else:
+                                try:
+                                    user.skip()
+                                except Exception:
+                                    pass
 
                         # 无论如何都发送客户端取消事件以收起输入控件
                         try:
@@ -210,15 +252,16 @@ async def main():
                             put_html('')
                     except Exception:
                         pass
-            # 仅当处于夜间阶段且当前玩家为能在夜间行动的角色时才启动倒计时
+            # 仅当处于夜间阶段或上警阶段且当前玩家为能在夜间行动的角色时才启动倒计时
             try:
-                is_night_stage = room.stage in NIGHT_STAGES
+                is_countdown_stage = room.stage in COUNTDOWN_STAGES
             except Exception:
-                is_night_stage = False
+                is_countdown_stage = False
 
-            if current_user.skill.get('countdown_task') is None and is_night_stage:
+            if current_user.skill.get('countdown_task') is None and is_countdown_stage:
                 try:
-                    if current_user.role_instance and current_user.role_instance.can_act_at_night:
+                    # 上警阶段或夜间角色阶段都启动倒计时
+                    if room.stage == GameStage.SHERIFF or (current_user.role_instance and current_user.role_instance.can_act_at_night):
                         # 清理房间日志中遗留的倒计时私聊信息，避免旧条目继续显示在 Private 区
                         try:
                             if current_user.room and isinstance(current_user.room.log, list):
@@ -227,16 +270,16 @@ async def main():
                         except Exception:
                             pass
 
-                        task = asyncio.create_task(_countdown(current_user, 20))
+                        task = asyncio.create_task(_countdown(current_user, countdown_seconds))
                         current_user.skill['countdown_task'] = task
                 except Exception:
                     pass
 
             current_user.input_blocking = True
             with use_scope('input_group', clear=True):  # 替换 clear('input_group')
-                # 在操作窗口内创建单行倒计时显示 scope（仅在夜间阶段且玩家可行动时）
+                # 在操作窗口内创建单行倒计时显示 scope（仅在夜间阶段或上警阶段且玩家可行动时）
                 try:
-                    if is_night_stage and current_user.role_instance and current_user.role_instance.can_act_at_night:
+                    if is_countdown_stage:
                         # 在 input_group scope 内创建一个可更新的子 scope 占位符，保证其显示在操作窗口内
                         try:
                             put_scope(f'input_countdown_{current_user.nick}')
@@ -317,27 +360,18 @@ async def main():
                 # 这里可以添加猎人开枪按钮逻辑
 
         # === 夜晚行动处理（调用 role_instance） ===
-        if data.get('wolf_team_op'):
-            current_user.role_instance.kill_player(data.get('wolf_team_op'))
-        if data.get('seer_team_op'):
-            current_user.role_instance.identify_player(data.get('seer_team_op'))
-        if data.get('witch_team_op'):
-            mode = data.get('witch_mode')
-            if mode == '解药':
-                current_user.role_instance.heal_player(data.get('witch_team_op'))
-            elif mode == '毒药':
-                current_user.role_instance.kill_player(data.get('witch_team_op'))
-        if data.get('guard_team_op'):
-            current_user.role_instance.protect_player(data.get('guard_team_op'))
-        if data.get('dreamer_team_op'):
-            current_user.role_instance.select_target(data.get('dreamer_team_op'))
-        if data.get('hunter_confirm'):
-            current_user.skip()
+        if current_user.role_instance:
+            current_user.role_instance.handle_inputs(data)
 
         # === 上警与发言 ===
         if data.get('sheriff_vote'):
             current_user.skill['sheriff_vote'] = data.get('sheriff_vote')
-            current_user.skip()
+            current_user.skill['sheriff_voted'] = True  # 标记已投票
+            # 取消倒计时
+            task = current_user.skill.pop('countdown_task', None)
+            if task:
+                task.cancel()
+            # 不需要skip，直接继续循环刷新界面
 
         if data.get('speech_done') and current_user.nick == room.current_speaker:
             current_user.skip()

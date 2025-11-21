@@ -10,6 +10,9 @@ class Dreamer(RoleBase):
     team = '好人阵营'
     can_act_at_night = True
 
+    def input_handlers(self):
+        return {'dreamer_team_op': self.select_target}
+
     def should_act(self) -> bool:
         room = self.user.room
         return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.DREAMER and not self.user.skill.get('acted_this_stage', False)
@@ -18,11 +21,25 @@ class Dreamer(RoleBase):
         if not self.should_act():
             return []
         room = self.user.room
-        buttons = [f"{u.seat}. {u.nick}" for u in room.list_alive_players() if u.nick != self.user.nick]
+        
+        # 获取当前玩家的临时选择
+        current_choice = self.user.skill.get('pending_dream_target')
+        
+        buttons = []
+        for u in room.list_alive_players():
+            if u.nick != self.user.nick:
+                label = f"{u.seat}. {u.nick}"
+                # 如果是当前玩家的临时选择，标记为黄色（warning）
+                if u.nick == current_choice:
+                    buttons.append({'label': label, 'value': label, 'color': 'warning'})
+                else:
+                    buttons.append({'label': label, 'value': label})
+        
+        buttons.append({'label': '取消', 'type': 'cancel'})
         return [
             actions(
                 name='dreamer_team_op',
-                buttons=add_cancel_button(buttons),
+                buttons=buttons,
                 help_text='摄梦人，请选择梦游对象。'
             )
         ]
@@ -31,14 +48,16 @@ class Dreamer(RoleBase):
     def select_target(self, nick: str) -> Optional[str]:
         if nick == '取消':
             return None
-        if nick == self.user.nick:
+        # 解析 "seat. nick" 格式
+        target_nick = nick.split('.', 1)[-1].strip()
+        if target_nick == self.user.nick:
             return '不能选择自己'
-        target = self.user.room.players.get(nick)
+        target = self.user.room.players.get(target_nick)
         if not target or target.status == PlayerStatus.DEAD:
             return '目标已死亡'
 
         # 暂存梦游目标
-        self.user.skill['pending_dream_target'] = nick
+        self.user.skill['pending_dream_target'] = target_nick
         return 'PENDING'
 
     @player_action

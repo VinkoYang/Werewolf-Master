@@ -10,6 +10,9 @@ class Seer(RoleBase):
     team = '好人阵营'
     can_act_at_night = True
 
+    def input_handlers(self):
+        return {'seer_team_op': self.identify_player}
+
     def should_act(self) -> bool:
         room = self.user.room
         return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.SEER and not self.user.skill.get('acted_this_stage', False)
@@ -20,12 +23,19 @@ class Seer(RoleBase):
         room = self.user.room
         # 显示所有玩家（包括自己和已出局的），自己和已出局的按钮灰色且不可选
         players = sorted(room.players.values(), key=lambda x: x.seat if x.seat is not None else 0)
+        
+        # 获取当前玩家的临时选择
+        current_choice = self.user.skill.get('pending_target')
+        
         buttons = []
         for u in players:
             label = f"{u.seat}. {u.nick}"
             # 自己或已出局的玩家：灰色且禁用
             if u.nick == self.user.nick or u.status == PlayerStatus.DEAD:
                 buttons.append({'label': label, 'value': label, 'disabled': True, 'color': 'secondary'})
+            # 如果是当前玩家的临时选择，标记为黄色（warning）
+            elif u.nick == current_choice:
+                buttons.append({'label': label, 'value': label, 'color': 'warning'})
             else:
                 buttons.append({'label': label, 'value': label})
         
@@ -42,6 +52,8 @@ class Seer(RoleBase):
     def identify_player(self, nick: str) -> Optional[str]:
         if nick == '取消' or nick == '放弃':
             return None
+        
+        # 解析昵称：处理 "seat. nick" 格式
         target_nick = nick.split('.', 1)[-1].strip()
         target = self.user.room.players.get(target_nick)
         if not target:
