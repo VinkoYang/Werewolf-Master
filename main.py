@@ -50,7 +50,11 @@ async def main():
     if data['cmd'] == '创建房间':
         # 先显示板子预设选择
         preset_data = await input_group('板子预设', inputs=[
-            actions(name='preset', buttons=['3人测试板子', '自定义配置'], help_text='选择预设或自定义')
+            actions(
+                name='preset',
+                buttons=['3人测试板子', '预女猎守1狼6人测试', '预女猎守2狼7人测试', '自定义配置'],
+                help_text='选择预设或自定义'
+            )
         ])
         
         if preset_data['preset'] == '3人测试板子':
@@ -60,6 +64,24 @@ async def main():
                 'god_wolf': [],
                 'citizen_num': 1,
                 'god_citizen': ['预言家'],
+                'witch_rule': '仅第一夜可自救',
+                'guard_rule': '同时被守被救时，对象死亡'
+            }
+        elif preset_data['preset'] == '预女猎守1狼6人测试':
+            room_config = {
+                'wolf_num': 1,
+                'god_wolf': [],
+                'citizen_num': 1,
+                'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
+                'witch_rule': '仅第一夜可自救',
+                'guard_rule': '同时被守被救时，对象死亡'
+            }
+        elif preset_data['preset'] == '预女猎守2狼7人测试':
+            room_config = {
+                'wolf_num': 2,
+                'god_wolf': [],
+                'citizen_num': 1,
+                'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
                 'witch_rule': '仅第一夜可自救',
                 'guard_rule': '同时被守被救时，对象死亡'
             }
