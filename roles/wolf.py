@@ -55,21 +55,18 @@ class Wolf(RoleBase):
         for target, voters in wolf_votes.items():
             summary_lines.append(f"{target} 被 {', '.join(voters)} 选择")
 
-        inputs = []
-        if summary_lines:
-            from pywebio.output import put_html
-            summary_html = "<br>".join(summary_lines)
-            inputs.append(put_html(f"<div style='color:#c00'>{summary_html}</div>"))
+        summary_text = '\n'.join(summary_lines)
+        help_desc = '狼人，请选择要击杀的对象。'
+        if summary_text:
+            help_desc += f"\n当前选择：{summary_text}"
 
-        inputs.append(
+        return [
             actions(
                 name='wolf_team_op',
                 buttons=buttons + [{'label': '放弃', 'type': 'cancel'}],
-                help_text='狼人，请选择要击杀的对象。'
+                help_text=help_desc
             )
-        )
-
-        return inputs
+        ]
 
     @player_action
     def kill_player(self, nick: str) -> Optional[str]:

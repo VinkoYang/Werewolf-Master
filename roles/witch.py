@@ -103,7 +103,7 @@ class Witch(RoleBase):
         if not self.has_heal():
             return '没有解药了'
         
-        # 救所有被杀的玩家（通常只有一个）
+        saved = []
         for target in pending:
             if room.witch_rule == WitchRule.NO_SELF_RESCUE and target.nick == self.user.nick:
                 return '不能解救自己'
@@ -113,11 +113,18 @@ class Witch(RoleBase):
             
             if target.status == PlayerStatus.PENDING_DEAD:
                 target.status = PlayerStatus.PENDING_HEAL
+                saved.append(target)
         
         self.user.skill['heal'] = False
         self.user.skill['acted_this_stage'] = True
         self.user.skill.pop('witch_heal_msg_sent', None)
         self.user.skill.pop('witch_no_kill_msg_sent', None)
+        if saved:
+            seats = ', '.join(str(t.seat) for t in saved)
+            self.user.send_msg(f'今晚，你对{seats}号玩家使用解药')
+        else:
+            self.user.send_msg('今晚，你尝试使用解药，但无人需要')
+        self.user.skill['witch_action_notified'] = True
         return True
     
     @player_action
@@ -164,5 +171,14 @@ class Witch(RoleBase):
         self.user.skill['acted_this_stage'] = True
         self.user.skill.pop('witch_heal_msg_sent', None)
         self.user.skill.pop('witch_no_kill_msg_sent', None)
+        seat = target.seat if target else '?'
+        self.user.send_msg(f'今晚，你对{seat}号玩家使用毒药')
+        self.user.skill['witch_action_notified'] = True
         return True
+
+    @player_action
+    def skip(self):
+        if not self.user.skill.get('witch_action_notified', False):
+            self.user.send_msg('今晚，你没有操作')
+            self.user.skill['witch_action_notified'] = True
 

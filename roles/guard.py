@@ -70,4 +70,13 @@ class Guard(RoleBase):
         target.status = PlayerStatus.PENDING_GUARD
         self.user.skill['last_protect'] = nick
         self.user.skill['acted_this_stage'] = True
+        seat = target.seat if target else '?'
+        self.user.send_msg(f'今晚，你守护了{seat}号玩家')
+        self.user.skill['guard_action_notified'] = True
         return True
+
+    @player_action
+    def skip(self):
+        if not self.user.skill.get('guard_action_notified', False):
+            self.user.send_msg('今晚，你没有操作')
+            self.user.skill['guard_action_notified'] = True
