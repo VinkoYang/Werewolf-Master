@@ -33,6 +33,11 @@ class GameStage(Enum):
     DREAMER = '摄梦人'          # 摄梦人阶段
     SHERIFF = '上警'           # 上警阶段
     SPEECH = '发言'            # 竞选发言阶段
+    LAST_WORDS = '遗言'
+    EXILE_SPEECH = '放逐发言'
+    EXILE_VOTE = '放逐投票'
+    EXILE_PK_SPEECH = '放逐PK发言'
+    EXILE_PK_VOTE = '放逐PK投票'
 
 
 # 玩家角色

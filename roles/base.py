@@ -9,7 +9,7 @@ from models.user import User
 
 def player_action(func):
     def wrapper(self, *args, **kwargs):
-        if self.user.room is None or self.user.room.waiting is not True:
+        if self.user.room is None:
             return
         if not self.should_act():
             return
@@ -59,23 +59,12 @@ class RoleBase:
                 continue
 
             try:
-                sig = inspect.signature(handler)
-                params = sig.parameters.values()
-                takes_args = any(
-                    p.kind in (
-                        inspect.Parameter.POSITIONAL_ONLY,
-                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                        inspect.Parameter.VAR_POSITIONAL
-                    )
-                    for p in params
-                )
-            except (TypeError, ValueError):
-                takes_args = True
-
-            if takes_args:
                 handler(value)
-            else:
+            except TypeError:
                 handler()
+
+    def supports_last_skill(self) -> bool:
+        return False
 
     @player_action
     def skip(self):
