@@ -3,6 +3,7 @@ import asyncio
 import sys
 import platform
 import signal
+import re
 from logging import getLogger, basicConfig
 
 from pywebio import start_server
@@ -26,6 +27,14 @@ basicConfig(stream=sys.stdout,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = getLogger('Wolf')
 logger.setLevel('DEBUG')
+
+
+def make_scope_name(prefix: str, nick: str) -> str:
+    """Sanitize nicknames for PyWebIO scope names."""
+    suffix = re.sub(r'[^0-9A-Za-z_-]', '_', nick)
+    if not suffix:
+        suffix = 'player'
+    return f'{prefix}_{suffix}'
 
 
 async def main():
@@ -103,10 +112,35 @@ async def main():
         raise NotImplementedError
 
     # 增大消息显示区域高度，提供更充足的聊天/系统信息显示空间
-    put_scrollable(current_user.game_msg, height=400, keep_bottom=True)
+    put_scrollable(current_user.game_msg, height=600, keep_bottom=True)
     current_user.game_msg.append(put_text(room.desc()))
 
     room.add_player(current_user)
+
+    def trigger_manual_refresh():
+        task = current_user.skill.pop('countdown_task', None)
+        if task:
+            task.cancel()
+        try:
+            get_current_session().send_client_event({
+                'event': 'from_cancel',
+                'task_id': current_user.main_task_id,
+                'data': None
+            })
+        except Exception:
+            pass
+
+    with use_scope(make_scope_name('global_controls', current_user.nick), clear=True):
+        put_buttons(
+            [
+                {
+                    'label': '刷新操作窗口',
+                    'value': 'manual_refresh',
+                    'color': 'success'
+                }
+            ],
+            onclick=lambda _: trigger_manual_refresh()
+        )
 
     while True:
         await asyncio.sleep(0.2)
@@ -315,7 +349,7 @@ async def main():
 
                         # 在操作窗口内的专用 scope 中更新倒计时（覆盖同一行），避免消息区污染
                         try:
-                            with use_scope(f'input_countdown_{user.nick}', clear=True):
+                            with use_scope(make_scope_name('input_countdown', user.nick), clear=True):
                                 put_html(f"<div style='color:#c00; font-weight:bold; font-size:18px'>倒计时：{i}s</div>")
                         except Exception:
                             # 忽略更新失败
@@ -378,7 +412,7 @@ async def main():
 
                     # 清理倒计时显示（操作窗口内）
                     try:
-                        with use_scope(f'input_countdown_{user.nick}', clear=True):
+                        with use_scope(make_scope_name('input_countdown', user.nick), clear=True):
                             put_html('')
                     except Exception:
                         pass
@@ -431,7 +465,7 @@ async def main():
                     if is_countdown_stage:
                         # 在 input_group scope 内创建一个可更新的子 scope 占位符，保证其显示在操作窗口内
                         try:
-                            with use_scope(f'input_countdown_{current_user.nick}', clear=True):
+                            with use_scope(make_scope_name('input_countdown', current_user.nick), clear=True):
                                 pass
                         except Exception:
                             pass
@@ -448,7 +482,7 @@ async def main():
                     task.cancel()
                 # 清理倒计时显示（操作窗口内）
                 try:
-                    with use_scope(f'input_countdown_{current_user.nick}', clear=True):
+                    with use_scope(make_scope_name('input_countdown', current_user.nick), clear=True):
                         put_html('')
                 except Exception:
                     pass
@@ -462,10 +496,11 @@ async def main():
                 await asyncio.sleep(0.1)
                 continue
 
+
         if data is None:
             # 清理倒计时显示并跳过
             try:
-                with use_scope(f'input_countdown_{current_user.nick}', clear=True):
+                with use_scope(make_scope_name('input_countdown', current_user.nick), clear=True):
                     put_html('')
             except Exception:
                 pass
@@ -488,7 +523,10 @@ async def main():
                       value=list(WitchRule.mapping().keys())[list(WitchRule.mapping().values()).index(room.witch_rule)]),
                 select(name='guard_rule', label='守卫规则', options=GuardRule.as_options(),
                       value=list(GuardRule.mapping().keys())[list(GuardRule.mapping().values()).index(room.guard_rule)]),
-            ])
+            ], cancelable=True)
+            if room_config is None:
+                current_user.send_msg('⚠️ 房间配置已取消。')
+                continue
             # 更新房间配置
             from copy import copy
             roles = []
@@ -523,7 +561,7 @@ async def main():
         if data.get('day_host_action') and current_user is room.get_host():
             action = data.get('day_host_action')
             if action == '公布昨夜信息':
-                msg = room.publish_night_info()
+                msg = await room.publish_night_info()
                 if msg:
                     current_user.send_msg(msg)
             elif action == '放逐投票':

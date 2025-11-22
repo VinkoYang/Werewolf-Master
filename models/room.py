@@ -190,15 +190,15 @@ class Room:
 
         # ---------- 其他神职 ----------
         night_roles = [
-            (GameStage.SEER, Role.SEER),
-            (GameStage.WITCH, Role.WITCH),
-            (GameStage.GUARD, Role.GUARD),
-            (GameStage.HUNTER, Role.HUNTER),
-            (GameStage.DREAMER, Role.DREAMER),
+            (GameStage.SEER, [Role.SEER]),
+            (GameStage.WITCH, [Role.WITCH]),
+            (GameStage.GUARD, [Role.GUARD]),
+            (GameStage.HUNTER, [Role.HUNTER]),
+            (GameStage.DREAMER, [Role.DREAMER]),
         ]
 
-        for stage, role_enum in night_roles:
-            if any(u.role == role_enum and u.status == PlayerStatus.ALIVE for u in self.players.values()):
+        for stage, role_list in night_roles:
+            if self._has_active_role(role_list):
                 self.stage = stage
                 for user in self.players.values():
                     user.skill['acted_this_stage'] = False
@@ -270,6 +270,13 @@ class Room:
         while self.day_state.get('phase') != 'done':
             await asyncio.sleep(0.5)
 
+    def _has_active_role(self, roles: List[Role]) -> bool:
+        alive_statuses = {PlayerStatus.ALIVE, PlayerStatus.PENDING_GUARD, PlayerStatus.PENDING_HEAL}
+        return any(
+            user.role in roles and user.status in alive_statuses
+            for user in self.players.values()
+        )
+
     async def wait_for_player(self):
         timeout = 20
         start = asyncio.get_event_loop().time()
@@ -337,7 +344,7 @@ class Room:
         user.room = self
         user.start_syncer()
         user.seat = len(self.players)
-        status = f'人数 {len(self.players)}/{len(self.roles)}，房主是 {self.get_host().nick}'
+        status = f'【{user.nick}】进入房间，人数 {len(self.players)}/{len(self.roles)}，房主是 {self.get_host().nick}'
         user.game_msg.append(status)
         self.broadcast_msg(status)
         logger.info(f'用户 "{user.nick}" 加入房间 "{self.id}"，座位 {user.seat}')
@@ -658,7 +665,7 @@ class Room:
         if not player:
             self.finish_sheriff_phase(None)
             return
-        self.broadcast_msg(f"{self._format_label(nick)}当选警长，请警长选择发言顺序。", tts=True)
+        self.broadcast_msg(f"{self._format_label(nick)}当选警长，请房主公布昨夜信息。", tts=True)
         self.skill['sheriff_captain'] = nick
         self.finish_sheriff_phase(nick)
 
@@ -691,26 +698,43 @@ class Room:
         }
         self.broadcast_msg('请房主公布昨夜信息')
 
-    def publish_night_info(self) -> Optional[str]:
+    async def publish_night_info(self) -> Optional[str]:
         state = self.day_state or {}
         if state.get('phase') != 'announcement':
             return '当前不需要公布'
-        death_list = self.death_pending
+
+        death_list = [nick for nick in self.death_pending if nick in self.players]
+        formatted = [self._format_label(nick) for nick in death_list]
+
         if not death_list:
-            self.broadcast_msg('昨夜平安夜')
+            self.broadcast_msg('昨夜平安夜，无人出局。')
+            self.broadcast_msg('请警长选择发言顺序')
+            self.start_exile_speech()
         else:
-            seats = '，'.join(f"{self._format_label(nick)}" for nick in death_list)
-            self.broadcast_msg(f'昨夜出局：{seats}')
+            summary = '和'.join(formatted) if len(formatted) > 1 else formatted[0]
+            if len(formatted) == 1:
+                self.broadcast_msg(f'昨夜{summary}死亡，等待玩家发动技能')
+            else:
+                self.broadcast_msg(f'昨夜{summary}死亡')
+            # 夜晚遗言顺序随机
+            speech_order = death_list[:]
+            random.shuffle(speech_order)
+            allow_speech = (self.round == 1)
+            skip_msg = len(formatted) == 1
+            self.start_last_words(
+                speech_order,
+                allow_speech=allow_speech,
+                after_stage='exile_speech',
+                randomize=False,
+                skip_first_skill_msg=skip_msg
+            )
+
         self.death_pending = []
 
-        if death_list:
-            allow_speech = self.round == 1
-            self.start_last_words(death_list, allow_speech=allow_speech, after_stage='exile_speech')
-        else:
-            self.start_exile_speech()
-
-    def start_last_words(self, queue: List[str], allow_speech: bool, after_stage: str):
+    def start_last_words(self, queue: List[str], allow_speech: bool, after_stage: str, randomize: bool = False, skip_first_skill_msg: bool = False):
         valid_queue = [nick for nick in queue if nick in self.players]
+        if randomize and len(valid_queue) > 1:
+            random.shuffle(valid_queue)
         if not valid_queue:
             if after_stage == 'exile_speech':
                 self.start_exile_speech()
@@ -730,7 +754,10 @@ class Room:
             player.skill['last_words_skill_resolved'] = False
             player.skill['last_words_done'] = False
             player.skill['pending_last_skill'] = False
-        self.broadcast_msg(f"{self._format_label(valid_queue[0])}准备遗言/技能阶段")
+        self.day_state['last_word_skill_announced'] = skip_first_skill_msg
+        self.day_state['last_word_speech_announced'] = False
+        if not skip_first_skill_msg:
+            self._announce_last_word_skill()
 
     def handle_last_word_skill_choice(self, user: User, choice: str):
         if self.day_state.get('phase') != 'last_words':
@@ -757,13 +784,18 @@ class Room:
         if not user.skill.get('last_words_skill_resolved', False):
             return
         if allow_speech and not user.skill.get('last_words_done', False):
+            if not self.day_state.get('last_word_speech_announced', False):
+                self.broadcast_msg(f'请{self._format_label(user.nick)}发表遗言')
+                self.day_state['last_word_speech_announced'] = True
             return
         queue = self.day_state.get('last_words_queue', [])
         if queue and queue[0] == user.nick:
             queue.pop(0)
         if queue:
             self.day_state['current_last_word'] = queue[0]
-            self.broadcast_msg(f"{self._format_label(queue[0])}准备遗言/技能阶段")
+            self.day_state['last_word_skill_announced'] = False
+            self.day_state['last_word_speech_announced'] = False
+            self._announce_last_word_skill()
             player = self.players.get(queue[0])
             if player:
                 player.skill['last_words_skill_resolved'] = False
@@ -780,6 +812,15 @@ class Room:
                     if player:
                         player.status = PlayerStatus.DEAD
                 self.end_day_phase()
+
+    def _announce_last_word_skill(self):
+        current = self.day_state.get('current_last_word')
+        if not current:
+            return
+        if not self.day_state.get('last_word_skill_announced', False):
+            self.broadcast_msg(f'等待{self._format_label(current)}发动技能')
+            self.day_state['last_word_skill_announced'] = True
+            self.day_state['last_word_speech_announced'] = False
 
     def start_exile_speech(self):
         alive = sorted(self.list_alive_players(), key=lambda u: u.seat or 0)
