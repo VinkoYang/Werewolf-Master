@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Tuple, Union, Any
 from pywebio.session import run_async
 from pywebio.session.coroutinebased import TaskHandler
 
-from enums import Role, WitchRule, GuardRule, GameStage, LogCtrl, PlayerStatus
+from enums import Role, WitchRule, GuardRule, SheriffBombRule, GameStage, LogCtrl, PlayerStatus
 from models.system import Global, Config
 from models.user import User
 from utils import say
@@ -42,6 +42,7 @@ class Room:
     roles: List[Role] = field(default_factory=list)
     witch_rule: WitchRule = WitchRule.SELF_RESCUE_FIRST_NIGHT_ONLY
     guard_rule: GuardRule = GuardRule.MED_CONFLICT
+    sheriff_bomb_rule: SheriffBombRule = SheriffBombRule.DOUBLE_LOSS
 
     started: bool = False
     roles_pool: List[Role] = field(default_factory=list)
@@ -61,6 +62,7 @@ class Room:
     sheriff_speaker_index: int = 0
     sheriff_state: Dict[str, Any] = field(default_factory=dict)
     day_state: Dict[str, Any] = field(default_factory=dict)
+    sheriff_badge_destroyed: bool = False
 
     async def start_game(self):
         if self.started or len(self.players) < len(self.roles):
@@ -263,10 +265,21 @@ class Room:
         self.death_pending = dead_this_night
         self.broadcast_msg('天亮请睁眼', tts=True)
         await asyncio.sleep(2)
-        if self.round == 1:
+        needs_sheriff_phase = False
+        if not self.sheriff_badge_destroyed:
+            if self.round == 1:
+                needs_sheriff_phase = True
+            elif self.skill.get('sheriff_deferred_active'):
+                needs_sheriff_phase = True
+
+        if needs_sheriff_phase:
             self.stage = GameStage.SHERIFF
-            self.broadcast_msg('进行警上竞选', tts=True)
-            self.init_sheriff_phase()
+            if self.skill.get('sheriff_deferred_active'):
+                self.broadcast_msg('继续未完成的警长竞选', tts=True)
+                self.resume_deferred_sheriff_phase()
+            else:
+                self.broadcast_msg('进行警上竞选', tts=True)
+                self.init_sheriff_phase()
             while self.sheriff_state.get('phase') != 'done':
                 await asyncio.sleep(0.5)
         else:
@@ -422,6 +435,19 @@ class Room:
         seat = player.seat or '?'
         return f"{seat}号{player.nick}"
 
+    def can_wolf_self_bomb(self, user: User) -> bool:
+        if not user or user.status != PlayerStatus.ALIVE:
+            return False
+        if user.role not in (Role.WOLF, Role.WOLF_KING):
+            return False
+        if self.stage in (GameStage.SPEECH, GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
+            return self.current_speaker == user.nick
+        state = self.sheriff_state or {}
+        if self.stage == GameStage.SHERIFF and state.get('phase') == 'deferred_withdraw':
+            candidates = self.get_active_sheriff_candidates()
+            return user.nick in candidates
+        return False
+
     def get_active_sheriff_candidates(self) -> List[str]:
         state = self.sheriff_state or {}
         if not state:
@@ -547,6 +573,96 @@ class Room:
         self._check_auto_elect()
         return None
 
+    # -------------------- 狼人自曝逻辑 --------------------
+    def handle_wolf_self_bomb(self, user: User) -> Optional[str]:
+        if not self.can_wolf_self_bomb(user):
+            return '当前不可自曝'
+
+        if self.stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
+            self._handle_exile_stage_bomb(user)
+            return None
+
+        state = self.sheriff_state or {}
+        if self.stage == GameStage.SPEECH:
+            self._handle_sheriff_stage_bomb(user, deferred=False)
+            return None
+        if self.stage == GameStage.SHERIFF and state.get('phase') == 'deferred_withdraw':
+            self._handle_sheriff_stage_bomb(user, deferred=True)
+            return None
+        return '当前不可自曝'
+
+    def _handle_exile_stage_bomb(self, user: User):
+        day_state = self.day_state or {}
+        phase = day_state.get('phase')
+        if phase not in ('exile_speech', 'exile_pk_speech'):
+            return
+
+        self.broadcast_msg(f"{self._format_label(user.nick)}选择自曝，今日放逐发言结束。")
+        queue = day_state.get('exile_speech_queue', [])
+        queue.clear()
+        day_state['phase'] = 'bomb_execution'
+        self.current_speaker = None
+        self._start_bomb_last_words(user.nick)
+
+    def _handle_sheriff_stage_bomb(self, user: User, deferred: bool):
+        state = self.sheriff_state or {}
+        self.broadcast_msg(f"{self._format_label(user.nick)}在警长竞选阶段自曝，竞选被迫中止。")
+        # 清理候选与队列
+        for bucket in ('up', 'withdrawn', 'pk_candidates'):
+            if bucket in state:
+                state[bucket] = [n for n in state[bucket] if n != user.nick]
+        queue = state.get('speech_queue', [])
+        if queue:
+            state['speech_queue'] = [n for n in queue if n != user.nick]
+        if self.current_speaker == user.nick:
+            self.current_speaker = None
+
+        self._queue_pending_day_bomb(user.nick, origin='sheriff')
+        user.status = PlayerStatus.PENDING_DEAD
+
+        bomb_count = self.skill.get('sheriff_bomb_count', 0) + 1
+        self.skill['sheriff_bomb_count'] = bomb_count
+        deferred_active = self.skill.get('sheriff_deferred_active', False)
+        rule = self.sheriff_bomb_rule
+
+        badge_lost = False
+        if rule == SheriffBombRule.SINGLE_LOSS:
+            badge_lost = True
+        elif rule == SheriffBombRule.DOUBLE_LOSS:
+            badge_lost = deferred_active or deferred or bomb_count >= 2
+
+        if badge_lost:
+            self.sheriff_badge_destroyed = True
+            self.skill['sheriff_deferred_active'] = False
+            self.skill['sheriff_deferred_payload'] = None
+            self.skill['sheriff_bomb_count'] = 0
+            self.broadcast_msg('警徽流失，本局将没有警长。')
+        else:
+            payload = {
+                'up': [n for n in state.get('up', []) if n != user.nick],
+                'down': state.get('down', [])[:],
+                'withdrawn': [n for n in state.get('withdrawn', []) if n != user.nick],
+            }
+            self.skill['sheriff_deferred_payload'] = payload
+            self.skill['sheriff_deferred_active'] = True
+            self.broadcast_msg('警长竞选推迟至下一天，保留首日上警名单。')
+
+        self._cancel_deferred_withdraw_timer()
+        state['phase'] = 'done'
+        self.finish_sheriff_phase(None)
+
+    def _queue_pending_day_bomb(self, nick: str, origin: str):
+        queue = self.skill.setdefault('pending_day_bombs', [])
+        queue.append({'nick': nick, 'origin': origin})
+
+    def _start_bomb_last_words(self, nick: str):
+        player = self.players.get(nick)
+        if not player:
+            return
+        player.status = PlayerStatus.PENDING_DEAD
+        self.day_state['pending_execution'] = nick
+        self.start_last_words([nick], allow_speech=True, after_stage='end_day')
+
     def _check_auto_elect(self):
         state = self.sheriff_state or {}
         if state.get('phase') not in ('speech', 'await_vote'):
@@ -554,6 +670,87 @@ class Room:
         candidates = self.get_active_sheriff_candidates()
         if len(candidates) == 1:
             self._declare_sheriff(candidates[0])
+
+    def resume_deferred_sheriff_phase(self):
+        payload = self.skill.get('sheriff_deferred_payload') or {}
+        up = [nick for nick in payload.get('up', []) if self._is_alive(nick)]
+        down = [nick for nick in payload.get('down', []) if self._is_alive(nick)]
+        withdrawn = [nick for nick in payload.get('withdrawn', []) if nick in up]
+
+        if not up:
+            self.sheriff_badge_destroyed = True
+            self.skill['sheriff_deferred_active'] = False
+            self.skill['sheriff_deferred_payload'] = None
+            self.broadcast_msg('无存活的上警玩家，警徽流失。')
+            state = {'phase': 'done'}
+            self.sheriff_state = state
+            self.finish_sheriff_phase(None)
+            return
+
+        state = {
+            'phase': 'deferred_withdraw',
+            'up': up,
+            'down': down,
+            'withdrawn': withdrawn,
+            'order_dir': None,
+            'speech_queue': [],
+            'pk_order_dir': None,
+            'pk_candidates': [],
+            'eligible_voters': [],
+            'vote_records': {},
+        }
+        self.sheriff_state = state
+        self.current_speaker = None
+        remain = '、'.join(self._format_label(nick) for nick in up)
+        self.broadcast_msg(f'上一日狼人自曝，保留上警玩家：{remain}。10 秒内可退水。')
+        self._start_deferred_withdraw_timer()
+
+    def _start_deferred_withdraw_timer(self, seconds: int = 10):
+        self._cancel_deferred_withdraw_timer()
+        task = asyncio.create_task(self._deferred_withdraw_timer(seconds))
+        self.skill['deferred_withdraw_task'] = task
+
+    def _cancel_deferred_withdraw_timer(self):
+        task = self.skill.pop('deferred_withdraw_task', None)
+        if task:
+            task.cancel()
+
+    async def _deferred_withdraw_timer(self, seconds: int):
+        try:
+            await asyncio.sleep(seconds)
+        except asyncio.CancelledError:
+            return
+        if self.sheriff_state.get('phase') == 'deferred_withdraw':
+            self.complete_deferred_withdraw()
+
+    def complete_deferred_withdraw(self):
+        state = self.sheriff_state or {}
+        if state.get('phase') != 'deferred_withdraw':
+            return
+        self._cancel_deferred_withdraw_timer()
+
+        candidates = self.get_active_sheriff_candidates()
+        if not candidates:
+            self.sheriff_badge_destroyed = True
+            self.skill['sheriff_deferred_active'] = False
+            self.skill['sheriff_deferred_payload'] = None
+            self.skill['sheriff_bomb_count'] = 0
+            self.broadcast_msg('无人上警，警徽流失。')
+            state['phase'] = 'done'
+            self.finish_sheriff_phase(None)
+            return
+
+        if len(candidates) == 1:
+            self.skill['sheriff_deferred_active'] = False
+            self.skill['sheriff_deferred_payload'] = None
+            self.skill['sheriff_bomb_count'] = 0
+            self._declare_sheriff(candidates[0])
+            return
+
+        state['phase'] = 'await_vote'
+        names = '、'.join(self._format_label(nick) for nick in candidates)
+        self.broadcast_msg(f'仍在警上的玩家有：{names}，请没有上警的玩家投票。')
+        self.start_sheriff_vote(pk_mode=False)
 
     def start_sheriff_vote(self, pk_mode: bool = False) -> Optional[str]:
         state = self.sheriff_state or {}
@@ -680,6 +877,9 @@ class Room:
             return
         self.broadcast_msg(f"{self._format_label(nick)}当选警长，请房主公布昨夜信息。", tts=True)
         self.skill['sheriff_captain'] = nick
+        self.skill['sheriff_deferred_active'] = False
+        self.skill['sheriff_deferred_payload'] = None
+        self.skill['sheriff_bomb_count'] = 0
         self.finish_sheriff_phase(nick)
 
     def finish_sheriff_phase(self, winner: Optional[str]):
@@ -842,6 +1042,20 @@ class Room:
             self.day_state['last_word_speech_announced'] = False
 
     def prompt_sheriff_order(self):
+        pending = self.skill.get('pending_day_bombs')
+        while pending:
+            entry = pending.pop(0)
+            bomber = self.players.get(entry.get('nick'))
+            if bomber:
+                self.broadcast_msg('由于狼人自曝，今日直接进入遗言阶段。')
+                self.day_state['phase'] = 'last_words'
+                self._start_bomb_last_words(bomber.nick)
+                if not pending:
+                    self.skill.pop('pending_day_bombs', None)
+                return
+        if pending == []:
+            self.skill.pop('pending_day_bombs', None)
+
         captain = self.skill.get('sheriff_captain')
         captain_alive = captain and self._is_alive(captain)
         self.broadcast_msg('放逐发言阶段，请警长选择发言顺序')
@@ -996,6 +1210,35 @@ class Room:
         choice = random.choice(['顺序发言', '逆序发言'])
         self.broadcast_msg(f'{self._format_label(captain_nick)}超时未选择发言顺序，系统自动{choice}')
         self.set_sheriff_order(captain, choice, auto=True)
+
+    def handle_sheriff_badge_action(self, user: User, choice: str) -> Optional[str]:
+        current = self.skill.get('sheriff_captain')
+        if current != user.nick:
+            return '只有现任警长可以操作'
+        if user.skill.get('badge_action_taken', False):
+            return '你已经做出选择'
+
+        if choice and choice.startswith('transfer:'):
+            target_nick = choice.split(':', 1)[1]
+            target = self.players.get(target_nick)
+            if not target or target.status != PlayerStatus.ALIVE:
+                return '目标玩家无效'
+            self.skill['sheriff_captain'] = target_nick
+            user.skill['badge_action_taken'] = True
+            self.broadcast_msg(f'{self._format_label(user.nick)}移交警徽给{self._format_label(target_nick)}。')
+            return None
+
+        if choice == 'destroy':
+            self.skill['sheriff_captain'] = None
+            self.sheriff_badge_destroyed = True
+            self.skill['sheriff_deferred_active'] = False
+            self.skill['sheriff_deferred_payload'] = None
+            self.skill['sheriff_bomb_count'] = 0
+            user.skill['badge_action_taken'] = True
+            self.broadcast_msg('警徽被撕毁，本局将没有警长。')
+            return None
+
+        return '无效的警徽操作'
 
     def start_exile_speech(self, queue: Optional[List[str]] = None, announce: bool = True):
         if queue is None:
@@ -1169,6 +1412,11 @@ class Room:
             user.skill['last_words_skill_resolved'] = False
             user.skill['last_words_done'] = False
             user.skill['pending_last_skill'] = False
+            user.skill.pop('badge_action_taken', None)
+        self.skill.pop('pending_day_bombs', None)
+        captain = self.skill.get('sheriff_captain')
+        if captain and not self._is_alive(captain):
+            self.skill['sheriff_captain'] = None
 
     @classmethod
     def get(cls, room_id) -> Optional['Room']:
@@ -1194,6 +1442,9 @@ class Room:
                 roles=copy(roles),
                 witch_rule=WitchRule.from_option(room_setting['witch_rule']),
                 guard_rule=GuardRule.from_option(room_setting['guard_rule']),
+                sheriff_bomb_rule=SheriffBombRule.from_option(
+                    room_setting.get('sheriff_bomb_rule', SheriffBombRule.DOUBLE_LOSS.value)
+                ),
                 started=False,
                 roles_pool=copy(roles),
                 players=dict(),

@@ -149,3 +149,28 @@ class GuardRule(Enum):
             '同时被守被救时，对象死亡': cls.MED_CONFLICT,
             '同时被守被救时，对象存活': cls.NO_MED_CONFLICT,
         }
+
+
+class SheriffBombRule(Enum):
+    SINGLE_LOSS = '单爆吞警徽'
+    DOUBLE_LOSS = '双爆吞警徽'
+
+    @classmethod
+    def as_options(cls) -> list:
+        return list(cls.mapping().keys())
+
+    @classmethod
+    def from_option(cls, option: Union[str, list]):
+        if isinstance(option, list):
+            return [cls.mapping()[item] for item in option]
+        elif isinstance(option, str):
+            return cls.mapping()[option]
+        else:
+            raise NotImplementedError
+
+    @classmethod
+    def mapping(cls) -> dict:
+        return {
+            '单爆吞警徽': cls.SINGLE_LOSS,
+            '双爆吞警徽': cls.DOUBLE_LOSS,
+        }
