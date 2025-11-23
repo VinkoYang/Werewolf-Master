@@ -194,8 +194,13 @@ class Witch(RoleBase):
 
     @player_action
     def skip(self):
+        if self.user.skill.get('acted_this_stage'):
+            self.user.skill.pop('witch_stage_ready', None)
+            return
+        pending = self.user.skill.pop('pending_poison_target', None)
         if not self.user.skill.get('witch_action_notified', False):
-            self.user.send_msg('今晚，你没有操作')
-            self.user.skill['witch_action_notified'] = True
+            if not pending:
+                self.user.send_msg('今晚，你没有操作')
+                self.user.skill['witch_action_notified'] = True
         self.user.skill.pop('witch_stage_ready', None)
 

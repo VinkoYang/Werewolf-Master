@@ -440,7 +440,12 @@ class Room:
             return False
         if user.role not in (Role.WOLF, Role.WOLF_KING):
             return False
-        if self.stage in (GameStage.SPEECH, GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
+        if self.stage == GameStage.SPEECH:
+            state = self.sheriff_state or {}
+            if state.get('phase') in ('speech', 'pk_speech'):
+                return True
+            return False
+        if self.stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
             return self.current_speaker == user.nick
         state = self.sheriff_state or {}
         if self.stage == GameStage.SHERIFF and state.get('phase') == 'deferred_withdraw':
@@ -786,6 +791,9 @@ class Room:
         self.broadcast_msg(prompt)
         if not eligible:
             self.finish_sheriff_vote()
+            return None
+
+        self._start_sheriff_vote_timer()
         return None
 
     def record_sheriff_ballot(self, user: User, target: str):
@@ -815,6 +823,7 @@ class Room:
         state = self.sheriff_state or {}
         if state.get('phase') not in ('vote', 'pk_vote'):
             return
+        self._cancel_sheriff_vote_timer()
 
         candidates = self.get_active_sheriff_candidates()
         vote_records = state.get('vote_records', {})
@@ -851,6 +860,39 @@ class Room:
             else:
                 self.broadcast_msg('PK 投票仍然平票，无人当选警长，警徽流失')
                 self.finish_sheriff_phase(None)
+
+    def _start_sheriff_vote_timer(self, seconds: int = 10):
+        self._cancel_sheriff_vote_timer()
+        task = asyncio.create_task(self._sheriff_vote_timeout(seconds))
+        self.skill['sheriff_vote_task'] = task
+
+    def _cancel_sheriff_vote_timer(self):
+        task = self.skill.pop('sheriff_vote_task', None)
+        if task:
+            task.cancel()
+
+    async def _sheriff_vote_timeout(self, seconds: int):
+        try:
+            await asyncio.sleep(seconds)
+        except asyncio.CancelledError:
+            return
+        state = self.sheriff_state or {}
+        if state.get('phase') not in ('vote', 'pk_vote'):
+            return
+        eligible = state.get('eligible_voters', [])
+        for nick in eligible:
+            player = self.players.get(nick)
+            if not player or not self._is_alive(nick):
+                continue
+            if player.skill.get('sheriff_has_balloted'):
+                continue
+            player.skill['sheriff_has_balloted'] = True
+            player.skill['sheriff_vote_pending'] = False
+            vote_records = state.setdefault('vote_records', {})
+            abstain = vote_records.setdefault('弃票', [])
+            if nick not in abstain:
+                abstain.append(nick)
+        self.finish_sheriff_vote()
 
     def start_pk_speech(self):
         state = self.sheriff_state or {}
