@@ -430,6 +430,21 @@ class Room:
     def _alive_nicks(self) -> List[str]:
         return [u.nick for u in self.list_alive_players()]
 
+    def _sheriff_pending_nicks(self) -> List[str]:
+        pending = getattr(self, 'death_pending', []) or []
+        return [nick for nick in pending if nick in self.players]
+
+    def _sheriff_signup_pool(self) -> List[str]:
+        alive = self._alive_nicks()
+        extras = [nick for nick in self._sheriff_pending_nicks() if nick not in alive]
+        return alive + extras
+
+    def _is_sheriff_eligible(self, nick: str) -> bool:
+        return self._is_alive(nick) or nick in self._sheriff_pending_nicks()
+
+    def can_participate_in_sheriff(self, nick: str) -> bool:
+        return self._is_sheriff_eligible(nick)
+
     def _can_player_vote(self, nick: str) -> bool:
         player = self.players.get(nick)
         if not player or player.status != PlayerStatus.ALIVE:
@@ -468,7 +483,7 @@ class Room:
         if not state:
             return []
         base = state.get('pk_candidates') if state.get('phase') in ('pk_speech', 'await_pk_vote', 'pk_vote') and state.get('pk_candidates') else state.get('up', [])
-        active = [nick for nick in base if nick not in state.get('withdrawn', []) and self._is_alive(nick)]
+        active = [nick for nick in base if nick not in state.get('withdrawn', []) and self._is_sheriff_eligible(nick)]
         return active
 
     def record_sheriff_choice(self, user: User, choice: str):
@@ -488,13 +503,13 @@ class Room:
         target_bucket = 'up' if choice == '上警' else 'down'
         state[target_bucket].append(user.nick)
 
-        alive = self._alive_nicks()
-        if all(self.players[n].skill.get('sheriff_voted', False) for n in alive):
+        pool = self._sheriff_signup_pool()
+        if all(self.players[n].skill.get('sheriff_voted', False) for n in pool):
             up_list = state['up']
             msg = '上警的玩家有：' + ('、'.join(self._format_label(n) for n in up_list) if up_list else '无人')
             self.broadcast_msg(msg)
 
-            alive_count = len(alive)
+            alive_count = len(pool)
             if not up_list:
                 self.broadcast_msg('无人上警，警徽流失')
                 self.finish_sheriff_phase(None)
@@ -926,7 +941,7 @@ class Room:
 
     def start_pk_speech(self):
         state = self.sheriff_state or {}
-        candidates = [nick for nick in state.get('pk_candidates', []) if self._is_alive(nick)]
+        candidates = [nick for nick in state.get('pk_candidates', []) if self._is_sheriff_eligible(nick)]
         if not candidates:
             self.finish_sheriff_phase(None)
             return
@@ -1135,6 +1150,9 @@ class Room:
                 self._start_badge_transfer_phase()
             elif next_stage == 'end_day':
                 self._finalize_day_execution()
+
+    def advance_last_words_progress(self, user: User):
+        self._advance_last_words_if_ready(user)
 
     def _announce_last_word_skill(self):
         current = self.day_state.get('current_last_word')

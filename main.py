@@ -210,7 +210,13 @@ async def main():
             user_ops = current_user.role_instance.get_actions()
 
             # === 警长竞选阶段 ===
-            if room.stage in (GameStage.SHERIFF, GameStage.SPEECH) and current_user.status == PlayerStatus.ALIVE:
+            can_join_sheriff = False
+            if hasattr(room, 'can_participate_in_sheriff'):
+                can_join_sheriff = room.can_participate_in_sheriff(current_user.nick)
+            else:
+                can_join_sheriff = current_user.status == PlayerStatus.ALIVE
+
+            if room.stage in (GameStage.SHERIFF, GameStage.SPEECH) and can_join_sheriff:
                 state_phase = sheriff_state.get('phase')
                 if state_phase == 'signup' and not current_user.skill.get('sheriff_voted', False):
                     user_ops += [

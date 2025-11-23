@@ -141,3 +141,4 @@ class Hunter(RoleBase):
         self.user.skill['pending_last_skill'] = False
         self.user.skill['last_words_skill_resolved'] = True
         self.user.skill['can_shoot'] = False
+        room.advance_last_words_progress(self.user)
