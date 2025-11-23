@@ -420,15 +420,8 @@ guard.py
 添加确认/跳过的私聊消息。
 清理解析和高亮逻辑，保证交互一致性。
 
-
-
-main.py
-
-已集成女巫和猎人的确认控件，无额外 UI 冗余（猎人保持单一确认按钮）。
-
-seer.py
-
-验证预言家仍正常渲染标准按钮，且在移除 put_html 后不再被阻塞。
+main.py：已集成女巫和猎人的确认控件，无额外 UI 冗余（猎人保持单一确认按钮）。
+seer.py：验证预言家仍正常渲染标准按钮，且在移除 put_html 后不再被阻塞。
 
 ## 2025-11-22 补丁更新
 1. main.py now appends统一的 刷新 按钮到每次 input_group，并在点按后立刻取消倒计时与输入，重新渲染当前阶段，不会误触发其他操作。
@@ -439,3 +432,31 @@ seer.py
 1. Added a protective try/except around the main loop sleep in main.py so page refreshes cancel/ignore the pending await instead of crashing sessions.
 2. Enhanced sheriff signup handling in room.py: zero or all signups now trigger police-badge loss, and a lone signup auto-elects that player without speeches or votes.
 3. Adjusted guard.py so guards still choose targets during守救冲突, but no longer receive the conflict-specific private hint (they just see the usual “你守护了…” message).
+
+## 2025-11-23 补丁更新
+1. room.py
+    当 没有警长存活 时，prompt_sheriff_order() 会随机选择一名存活玩家作为锚点，并随机选择 顺序/逆序，从该锚点开始发言。
+    当 有警长存活 时，房间切换到 GameStage.SHERIFF，等待警长选择。如果警长超时，则回退到同样的随机顺序逻辑。
+    新增辅助函数：
+        _build_queue_from_player()：根据指定玩家构建发言队列。
+        _random_queue_without_sheriff()：在无警长情况下生成随机队列。
+        force_sheriff_order_random()：强制随机选择顺序。
+        set_sheriff_order() 增加 auto 标志，用于区分 手动选择 和 系统自动选择。
+
+2. main.py
+警长选择顺序的提示使用 专用 20 秒倒计时，且计时仅针对警长。
+倒计时结束后自动调用 force_sheriff_order_random()。
+白天状态跟踪确保：
+    只有警长能看到 顺序/逆序按钮。
+    不再出现额外的“确认”按钮。
+
+3. main.py
+主循环顶部的 sleep 现在会吞掉刷新相关的 RuntimeError 和 CancelledError，避免在点击“刷新操作窗口”时（尤其主持人发言期间）导致 PyWebIO 协程崩溃。
+
+4. room.py
+警长选择顺序流程广播优化后的提示：
+    “放逐发言阶段，请警长选择发言顺序”
+    后续：“警长选择顺序/逆序发言，X请发言”
+去掉冗余的初始发言公告。
+无警长或超时情况仍有合理的自动选择提示。
+随机顺序逻辑和倒计时触发的回退使用一致的文本格式，保持统一。

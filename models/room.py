@@ -198,26 +198,33 @@ class Room:
         ]
 
         for stage, role_list in night_roles:
+            if not self._has_configured_role(role_list):
+                continue
+
+            self.stage = stage
+            for user in self.players.values():
+                user.skill['acted_this_stage'] = False
+
+            self.broadcast_msg(f'{stage.value}请出现', tts=True)
+            await asyncio.sleep(1)
+
+            # 女巫阶段：发送私聊信息给女巫
+            if stage == GameStage.WITCH:
+                for u in self.players.values():
+                    if u.role == Role.WITCH and u.status == PlayerStatus.ALIVE:
+                        # 女巫睡眼信息将在 get_actions 中发送（显示今夜被杀信息）
+                        pass
+
             if self._has_active_role(role_list):
-                self.stage = stage
-                for user in self.players.values():
-                    user.skill['acted_this_stage'] = False
-                    
-                self.broadcast_msg(f'{stage.value}请出现', tts=True)
-                await asyncio.sleep(1)
-                
-                # 女巫阶段：发送私聊信息给女巫
-                if stage == GameStage.WITCH:
-                    for u in self.players.values():
-                        if u.role == Role.WITCH and u.status == PlayerStatus.ALIVE:
-                            # 女巫睡眼信息将在 get_actions 中发送（显示今夜被杀信息）
-                            pass
-                
                 self.waiting = True
                 await self.wait_for_player()
-                await asyncio.sleep(1)
-                self.broadcast_msg(f'{stage.value}请闭眼', tts=True)
-                await asyncio.sleep(2)
+            else:
+                # 无对应在场角色，仍保留夜间阶段的等待时间
+                await asyncio.sleep(20)
+
+            await asyncio.sleep(1)
+            self.broadcast_msg(f'{stage.value}请闭眼', tts=True)
+            await asyncio.sleep(2)
 
         # ---------- 摄梦人结算 ----------
         dreamer = next((u for u in self.players.values() if u.role == Role.DREAMER and u.status == PlayerStatus.ALIVE), None)
@@ -275,6 +282,11 @@ class Room:
         return any(
             user.role in roles and user.status in alive_statuses
             for user in self.players.values()
+        )
+
+    def _has_configured_role(self, roles: List[Role]) -> bool:
+        return any(role in self.roles for role in roles) or any(
+            user.role in roles for user in self.players.values()
         )
 
     async def wait_for_player(self):
@@ -687,10 +699,11 @@ class Room:
         for user in self.players.values():
             user.skill['sheriff_vote_pending'] = False
         if not self.day_state:
-            self.prepare_day_phase()
+            announce = winner is None
+            self.prepare_day_phase(announce=announce)
 
     # -------------------- 白天阶段逻辑 --------------------
-    def prepare_day_phase(self):
+    def prepare_day_phase(self, announce: bool = True):
         self.stage = GameStage.Day
         self.day_state = {
             'phase': 'announcement',
@@ -704,8 +717,12 @@ class Room:
             'vote_records': {},
             'pk_candidates': [],
             'pending_execution': None,
+            'night_deaths': [],
+            'night_anchor': None,
+            'sheriff_order_pending': False,
         }
-        self.broadcast_msg('请房主公布昨夜信息')
+        if announce:
+            self.broadcast_msg('请房主公布昨夜信息')
 
     async def publish_night_info(self) -> Optional[str]:
         state = self.day_state or {}
@@ -714,11 +731,12 @@ class Room:
 
         death_list = [nick for nick in self.death_pending if nick in self.players]
         formatted = [self._format_label(nick) for nick in death_list]
+        self.day_state['night_deaths'] = death_list[:]
+        self.day_state['night_anchor'] = death_list[0] if len(death_list) == 1 else None
 
         if not death_list:
             self.broadcast_msg('昨夜平安夜，无人出局。')
-            self.broadcast_msg('请警长选择发言顺序')
-            self.start_exile_speech()
+            self.prompt_sheriff_order()
         else:
             summary = '和'.join(formatted) if len(formatted) > 1 else formatted[0]
             if len(formatted) == 1:
@@ -813,7 +831,7 @@ class Room:
         else:
             next_stage = self.day_state.get('after_last_words')
             if next_stage == 'exile_speech':
-                self.start_exile_speech()
+                self.prompt_sheriff_order()
             elif next_stage == 'end_day':
                 exec_target = self.day_state.get('pending_execution')
                 if exec_target:
@@ -831,9 +849,166 @@ class Room:
             self.day_state['last_word_skill_announced'] = True
             self.day_state['last_word_speech_announced'] = False
 
-    def start_exile_speech(self):
+    def prompt_sheriff_order(self):
+        captain = self.skill.get('sheriff_captain')
+        captain_alive = captain and self._is_alive(captain)
+        self.broadcast_msg('放逐发言阶段，请警长选择发言顺序')
+
+        if captain_alive:
+            self.stage = GameStage.SHERIFF
+            self.day_state['phase'] = 'await_sheriff_order'
+            self.day_state['sheriff_order_pending'] = True
+            return
+
+        queue, start_player, direction = self._random_queue_without_sheriff()
+        if queue:
+            label = '顺序发言' if direction == 'asc' else '逆序发言'
+            start_label = self._format_label(start_player.nick) if start_player else '首位玩家'
+            self.day_state['sheriff_order_pending'] = False
+            self.broadcast_msg(f'当前没有警长，系统随机选择{label}，{start_label}请发言')
+            self.start_exile_speech(queue=queue, announce=False)
+        else:
+            self.broadcast_msg('当前无可发言玩家，直接进入放逐投票')
+            self.day_state['phase'] = 'await_exile_vote'
+            self.stage = GameStage.Day
+
+    def set_sheriff_order(self, user: User, choice: str, auto: bool = False) -> Optional[str]:
+        if self.day_state.get('phase') != 'await_sheriff_order':
+            return '当前无需设置发言顺序'
+        captain = self.skill.get('sheriff_captain')
+        if user.nick != captain or not self._is_alive(user.nick):
+            return '只有在场警长可以操作'
+        mapping = {
+            '顺序发言': 'asc',
+            '逆序发言': 'desc',
+        }
+        direction = mapping.get(choice)
+        if not direction:
+            return '无效发言顺序'
+
+        queue = self._build_directional_queue(direction)
+        self.day_state['sheriff_order_pending'] = False
+        if queue:
+            self.start_exile_speech(queue=queue, announce=False)
+            first = queue[0]
+            prefix = '警长未在规定时间内选择，系统自动设为' if auto else '警长选择'
+            self.broadcast_msg(f'{prefix}{choice}，{self._format_label(first)}请发言')
+        else:
+            self.broadcast_msg('无人可发言，直接进入放逐投票')
+            self.day_state['phase'] = 'await_exile_vote'
+            self.stage = GameStage.Day
+        return None
+
+    def _build_directional_queue(self, direction: str) -> List[str]:
+        alive = self.list_alive_players()
+        if not alive:
+            return []
+
+        captain_nick = self.skill.get('sheriff_captain')
+        captain = next((u for u in alive if u.nick == captain_nick), None)
+        others = [u for u in alive if not captain or u.nick != captain.nick]
+        if not others:
+            return [captain.nick] if captain else []
+
+        ordered = sorted(others, key=lambda u: u.seat or 0)
+        anchor_seat = None
+        night_deaths = self.day_state.get('night_deaths', [])
+        if len(night_deaths) == 1:
+            anchor = self.players.get(night_deaths[0])
+            anchor_seat = anchor.seat if anchor else None
+
+        if direction == 'asc':
+            step = 1
+        else:
+            step = -1
+
+        if anchor_seat is not None:
+            start_idx = self._anchor_start_index(ordered, anchor_seat, direction)
+        elif captain:
+            start_idx = self._captain_start_index(ordered, captain.seat or 0, direction)
+        else:
+            start_idx = 0 if direction == 'asc' else len(ordered) - 1
+
+        rotated = self._rotate_players(ordered, start_idx, step)
+        queue = [p.nick for p in rotated]
+        if captain:
+            queue.append(captain.nick)
+        return queue
+
+    def _anchor_start_index(self, ordered: List[User], anchor_seat: int, direction: str) -> int:
+        if direction == 'asc':
+            for idx, player in enumerate(ordered):
+                if (player.seat or 0) > anchor_seat:
+                    return idx
+            return 0
+        else:
+            for idx in range(len(ordered) - 1, -1, -1):
+                if (ordered[idx].seat or 0) < anchor_seat:
+                    return idx
+            return len(ordered) - 1
+
+    def _captain_start_index(self, ordered: List[User], captain_seat: int, direction: str) -> int:
+        if direction == 'asc':
+            for idx, player in enumerate(ordered):
+                if (player.seat or 0) > captain_seat:
+                    return idx
+            return 0
+        else:
+            for idx in range(len(ordered) - 1, -1, -1):
+                if (ordered[idx].seat or 0) < captain_seat:
+                    return idx
+            return len(ordered) - 1
+
+    def _rotate_players(self, players: List[User], start_idx: int, step: int) -> List[User]:
+        if not players:
+            return []
+        n = len(players)
+        idx = start_idx % n
+        ordered = []
+        for _ in range(n):
+            ordered.append(players[idx])
+            idx = (idx + step) % n
+        return ordered
+
+    def _build_queue_from_player(self, start_nick: str, direction: str) -> List[str]:
         alive = sorted(self.list_alive_players(), key=lambda u: u.seat or 0)
-        queue = [u.nick for u in alive]
+        if not alive:
+            return []
+        ordered = alive
+        try:
+            start_idx = next(i for i, u in enumerate(ordered) if u.nick == start_nick)
+        except StopIteration:
+            start_idx = 0
+        step = 1 if direction == 'asc' else -1
+        rotated = self._rotate_players(ordered, start_idx, step)
+        return [p.nick for p in rotated]
+
+    def _random_queue_without_sheriff(self) -> Tuple[List[str], Optional[User], Optional[str]]:
+        alive = self.list_alive_players()
+        if not alive:
+            return [], None, None
+        start_player = random.choice(alive)
+        direction = random.choice(['asc', 'desc'])
+        queue = self._build_queue_from_player(start_player.nick, direction)
+        return queue, start_player, direction
+
+    def force_sheriff_order_random(self):
+        if self.day_state.get('phase') != 'await_sheriff_order':
+            return
+        captain_nick = self.skill.get('sheriff_captain')
+        captain = self.players.get(captain_nick) if captain_nick else None
+        if not captain or not self._is_alive(captain_nick):
+            self.day_state['sheriff_order_pending'] = False
+            self.prompt_sheriff_order()
+            return
+        choice = random.choice(['顺序发言', '逆序发言'])
+        self.broadcast_msg(f'{self._format_label(captain_nick)}超时未选择发言顺序，系统自动{choice}')
+        self.set_sheriff_order(captain, choice, auto=True)
+
+    def start_exile_speech(self, queue: Optional[List[str]] = None, announce: bool = True):
+        if queue is None:
+            alive = sorted(self.list_alive_players(), key=lambda u: u.seat or 0)
+            queue = [u.nick for u in alive]
         if not queue:
             self.end_day_phase()
             return
@@ -841,7 +1016,8 @@ class Room:
         self.day_state['exile_speech_queue'] = queue
         self.stage = GameStage.EXILE_SPEECH
         self.current_speaker = queue[0]
-        self._announce_exile_speaker(False)
+        if announce:
+            self._announce_exile_speaker(False)
 
     def _announce_exile_speaker(self, pk: bool):
         queue = self.day_state.get('exile_speech_queue', [])
@@ -930,20 +1106,25 @@ class Room:
             return
         candidates = self.day_state.get('vote_candidates', [])
         records = self.day_state.get('vote_records', {})
+        result_lines = ['放逐投票结果：']
         for nick in candidates:
             voters = records.get(nick, [])
-            seats = '、'.join(self._format_label(v) for v in voters) if voters else '无'
-            self.broadcast_msg(f"{self._format_label(nick)}得票：{seats}")
+            if not voters:
+                continue
+            seats = '、'.join(self._format_label(v) for v in voters)
+            result_lines.append(f"{self._format_label(nick)}得票<- {seats}")
         abstain = records.get('弃票', [])
         if abstain:
             seats = '、'.join(self._format_label(v) for v in abstain)
-            self.broadcast_msg(f"弃票：{seats}")
+            result_lines.append(f"弃票：{seats}")
+        self.broadcast_msg('\n'.join(result_lines))
+
         tally = {nick: len(records.get(nick, [])) for nick in candidates}
-        if not tally:
-            self.broadcast_msg('无人投票，白天结束')
+        max_votes = max(tally.values()) if tally else 0
+        if max_votes == 0:
+            self.broadcast_msg('放逐失败，无人出局')
             self.end_day_phase()
             return
-        max_votes = max(tally.values())
         winners = [nick for nick, cnt in tally.items() if cnt == max_votes]
         if len(winners) == 1:
             self.start_execution_sequence(winners[0])
@@ -952,7 +1133,7 @@ class Room:
                 self.day_state['pk_candidates'] = winners
                 self.start_exile_pk_speech()
             else:
-                self.broadcast_msg('PK 投票仍旧平票，无人出局')
+                self.broadcast_msg('放逐失败，无人出局')
                 self.end_day_phase()
 
     def start_exile_pk_speech(self):
@@ -980,6 +1161,9 @@ class Room:
     def end_day_phase(self):
         self.day_state['phase'] = 'done'
         self.day_state['pending_execution'] = None
+        self.day_state['night_deaths'] = []
+        self.day_state['night_anchor'] = None
+        self.day_state['sheriff_order_pending'] = False
         self.stage = GameStage.Day
         self.broadcast_msg('白天结束，进入夜晚')
         for user in self.players.values():

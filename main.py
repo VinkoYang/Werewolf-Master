@@ -147,7 +147,6 @@ async def main():
             await asyncio.sleep(0.2)
         except (RuntimeError, asyncio.CancelledError):
             # Refreshing the PyWebIO page may cancel the pending sleep; ignore and continue
-            await asyncio.sleep(0.1)
             continue
 
         # 非夜晚房主操作
@@ -284,6 +283,20 @@ async def main():
                         )
                     ]
 
+            # === 警长选择发言顺序 ===
+            if (
+                day_state.get('phase') == 'await_sheriff_order' and
+                room.skill.get('sheriff_captain') == current_user.nick and
+                current_user.status == PlayerStatus.ALIVE
+            ):
+                user_ops += [
+                    actions(
+                        name='sheriff_set_order',
+                        buttons=['顺序发言', '逆序发言'],
+                        help_text='请选择今日发言顺序'
+                    )
+                ]
+
             # === 发言阶段 ===
             if (
                 hasattr(room, 'current_speaker') and
@@ -321,12 +334,14 @@ async def main():
             continue
 
         if ops:
+            NIGHT_STAGES = {GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.DREAMER}
             # 夜间操作显示 20s 倒计时与确认键
             if room.stage is not None:
                 # 仅在有玩家操作时（夜晚阶段）追加确认键
                 # 避免重复添加：只在 user_ops 非空且为夜间角色时加入确认
                 try:
                     if (
+                        room.stage in NIGHT_STAGES and
                         current_user.role_instance and
                         current_user.role_instance.can_act_at_night and
                         current_user.role_instance.needs_global_confirm
@@ -336,7 +351,6 @@ async def main():
                     pass
 
             # 开启倒计时任务（每个玩家单独）仅在夜间角色可行动时启动
-            NIGHT_STAGES = {GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.DREAMER}
             DAY_TIMER_STAGES = {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE}
             COUNTDOWN_STAGES = NIGHT_STAGES | DAY_TIMER_STAGES
             
@@ -344,6 +358,9 @@ async def main():
             if room.stage in {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE}:
                 countdown_seconds = 10
             else:
+                countdown_seconds = 20
+
+            if room.stage == GameStage.SHERIFF and day_state.get('phase') == 'await_sheriff_order':
                 countdown_seconds = 20
             
             async def _countdown(user, seconds=20):
@@ -372,6 +389,11 @@ async def main():
                                 user.room.record_sheriff_choice(user, '不上警')
                             elif phase in ('vote', 'pk_vote') and user.skill.get('sheriff_vote_pending', False):
                                 user.room.record_sheriff_ballot(user, '弃票')
+                            elif (
+                                user.room.day_state.get('phase') == 'await_sheriff_order' and
+                                user.nick == user.room.skill.get('sheriff_captain')
+                            ):
+                                user.room.force_sheriff_order_random()
                         elif user.room.stage == GameStage.LAST_WORDS:
                             day_state_inner = getattr(user.room, 'day_state', {})
                             current_last = day_state_inner.get('current_last_word')
@@ -435,6 +457,8 @@ async def main():
                         if phase == 'signup' and not current_user.skill.get('sheriff_voted', False):
                             should_start = True
                         elif phase in ('vote', 'pk_vote') and current_user.skill.get('sheriff_vote_pending', False):
+                            should_start = True
+                        elif day_state.get('phase') == 'await_sheriff_order' and room.skill.get('sheriff_captain') == current_user.nick:
                             should_start = True
                     elif room.stage == GameStage.LAST_WORDS:
                         if day_state.get('current_last_word') == current_user.nick:
@@ -603,6 +627,11 @@ async def main():
             task = current_user.skill.pop('countdown_task', None)
             if task:
                 task.cancel()
+
+        if data.get('sheriff_set_order'):
+            msg = room.set_sheriff_order(current_user, data.get('sheriff_set_order'))
+            if msg:
+                current_user.send_msg(msg)
 
         if data.get('last_word_skill'):
             room.handle_last_word_skill_choice(current_user, data.get('last_word_skill'))
