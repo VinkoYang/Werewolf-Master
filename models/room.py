@@ -306,18 +306,10 @@ class Room:
                 task = user.skill.pop('countdown_task', None)
                 if task:
                     task.cancel()
-                # 每个玩家使用自己的session发送取消事件
-                if user.main_task_id and hasattr(user, 'session') and user.session:
-                    try:
-                        user.session.send_client_event({
-                            'event': 'from_cancel',
-                            'task_id': user.main_task_id,
-                            'data': None
-                        })
-                    except Exception:
-                        pass
             except Exception:
                 pass
+        # 通过日志控制项通知所有会话关闭输入窗口
+        self.log.append((None, LogCtrl.RemoveInput))
 
     async def check_game_end(self):
         wolves = [u for u in self.list_alive_players() if u.role in (Role.WOLF, Role.WOLF_KING)]
@@ -1156,7 +1148,12 @@ class Room:
         target.status = PlayerStatus.PENDING_DEAD
         self.day_state['pending_execution'] = nick
         self.broadcast_msg(f"{self._format_label(nick)}被放逐，进入被动技能与遗言阶段")
-        self.start_last_words([nick], allow_speech=True, after_stage='end_day')
+        queue = [nick]
+        if target.role == Role.HUNTER and target.skill.get('can_shoot', False):
+            shot_target = target.skill.get('pending_shot_target')
+            if shot_target and shot_target in self.players:
+                queue.append(shot_target)
+        self.start_last_words(queue, allow_speech=True, after_stage='end_day')
 
     def end_day_phase(self):
         self.day_state['phase'] = 'done'

@@ -460,3 +460,10 @@ seer.py：验证预言家仍正常渲染标准按钮，且在移除 put_html 后
 去掉冗余的初始发言公告。
 无警长或超时情况仍有合理的自动选择提示。
 随机顺序逻辑和倒计时触发的回退使用一致的文本格式，保持统一。
+
+5. 狼队空刀逻辑
+    给狼人面板新增可识别的 放弃 按钮，并在 wolf.py 中把它当成一次明确的弃刀操作处理，确保记录被清理且等待状态只在所有狼人决定后才结束。
+    新增 _abstain 与覆盖 skip，使倒计时触发的自动跳过同样计入已行动，且只有当全部狼人行动或放弃后才落刀；若最终无投票则夜晚自动判定为空刀。
+
+6. 更新遗言顺序
+    Updated models/room.py::start_execution_sequence so if the executed player is a hunter who successfully shoots someone, the遗言队列 includes both the hunter and the victim (hunter first). That way the sequence after the broadcast becomes: hunter skill announcement → hunter发遗言 →被带走的玩家发遗言.

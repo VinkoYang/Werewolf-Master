@@ -63,18 +63,20 @@ class Wolf(RoleBase):
         if summary_text:
             help_desc += f"\n当前选择：{summary_text}"
 
+        buttons.append({'label': '放弃', 'value': '放弃', 'color': 'secondary'})
         return [
             actions(
                 name='wolf_team_op',
-                buttons=buttons + [{'label': '放弃', 'type': 'cancel'}],
+                buttons=buttons,
                 help_text=help_desc
             )
         ]
 
     @player_action
     def kill_player(self, nick: str) -> Optional[str]:
-        if nick == '取消' or nick == '放弃':
-            return None
+        if nick == '放弃':
+            self._abstain()
+            return 'PENDING'
 
         room = self.user.room
 
@@ -129,6 +131,19 @@ class Wolf(RoleBase):
         # 检查是否所有狼人都已行动
         self._check_all_wolves_acted()
         return 'PENDING'  # 不立即结束等待，让其他狼人继续选择
+
+    def _abstain(self):
+        room = self.user.room
+        votes_map = room.skill.get('wolf_votes')
+        if votes_map:
+            for target, voters in list(votes_map.items()):
+                if self.user.nick in voters:
+                    voters.remove(self.user.nick)
+                    if not voters:
+                        votes_map.pop(target)
+        self.user.skill.pop('wolf_choice', None)
+        self.user.skill['acted_this_stage'] = True
+        self._check_all_wolves_acted()
     
     def _check_all_wolves_acted(self):
         """检查是否所有狼人都已行动，如果是则结束等待"""
@@ -138,3 +153,8 @@ class Wolf(RoleBase):
         all_acted = all(u.skill.get('acted_this_stage', False) for u in wolves)
         if all_acted:
             room.waiting = False
+
+    @player_action
+    def skip(self):
+        self._abstain()
+        return 'PENDING'

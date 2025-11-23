@@ -38,7 +38,7 @@ class Guard(RoleBase):
                 btn['color'] = 'warning'
             buttons.append(btn)
 
-        buttons.append({'label': '取消', 'type': 'cancel'})
+        buttons.append({'label': '放弃', 'type': 'cancel'})
         return [
             actions(
                 name='guard_team_op',
@@ -49,7 +49,7 @@ class Guard(RoleBase):
 
     @player_action
     def protect_player(self, nick: str) -> Optional[str]:
-        if nick == '取消':
+        if nick in ('取消', '放弃'):
             return None
         
         # 解析昵称：处理 "seat. nick" 格式
@@ -91,3 +91,6 @@ class Guard(RoleBase):
             self.user.send_msg('今晚，你没有操作')
             self.user.skill['guard_action_notified'] = True
         self.user.skill.pop('guard_stage_ready', None)
+        self.user.skill['acted_this_stage'] = True
+        if self.user.room:
+            self.user.room.waiting = False

@@ -158,14 +158,6 @@ async def main():
                 host_ops += [
                     actions(name='host_op', buttons=['开始游戏', '房间配置'], help_text='你是房主')
                 ]
-            elif room.stage == GameStage.Day and room.round > 0:
-                host_ops += [
-                    actions(
-                        name='host_vote_op',
-                        buttons=[f"{user.seat}. {user.nick}" for user in room.list_alive_players()],  # 添加座位号
-                        help_text='你是房主，本轮需要选择出局玩家'
-                    )
-                ]
             if room.stage in (GameStage.SHERIFF, GameStage.SPEECH):
                 if sheriff_state.get('phase') == 'await_vote':
                     host_ops += [
@@ -360,8 +352,6 @@ async def main():
             else:
                 countdown_seconds = 20
 
-            if room.stage == GameStage.SHERIFF and day_state.get('phase') == 'await_sheriff_order':
-                countdown_seconds = 20
             
             async def _countdown(user, seconds=20):
                 try:
@@ -568,14 +558,6 @@ async def main():
             room.witch_rule = WitchRule.from_option(room_config['witch_rule'])
             room.guard_rule = GuardRule.from_option(room_config['guard_rule'])
             room.broadcast_msg(f'房间配置已更新：{room.desc()}')
-        if data.get('host_vote_op'):
-            voted_nick = data.get('host_vote_op').split('.')[-1].strip()
-            await room.vote_kill(voted_nick)
-            voted_out = room.players.get(voted_nick)  # 修改为 voted_nick
-            if voted_out and voted_out.role == Role.HUNTER and voted_out.skill.get('can_shoot', False):
-                voted_out.send_msg('🔫 你是猎人，可以立即开枪！')
-                # 这里可以添加猎人开枪按钮逻辑
-
         if data.get('sheriff_host_action') and current_user is room.get_host():
             action = data.get('sheriff_host_action')
             if action == '警长投票':
