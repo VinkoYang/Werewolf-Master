@@ -1,5 +1,8 @@
 # Wolf
 狼人杀面杀法官系统
+## 链接
+- [狼人杀规则](rules.md)
+- [狼人杀角色介绍](roles.md)
 
 Preview
 --
@@ -51,10 +54,10 @@ python main.py
     好人阵营，神职。每晚必须选择一名除自己以外的玩家成为梦游者（未主动选择则系统随机选择），梦游者不知道自己正在梦游，且免疫一切夜间伤害。连续两晚选择同一名玩家会致其死亡。若摄梦人在夜晚死亡，则梦游者一并死亡。
     *因梦游出局的猎人、狼王均不能开枪。
     
-## 待解决bug
-- 预言家验人问题
-- 猎人闭眼之后不动
-- 守卫盾人信息不给奶穿
+## 待测试list
+- 测试双爆模式跨日竞选逻辑
+- 验证警徽移交后新警长权限立即生效
+- 检查自曝遗言阶段是否正确触发技能（猎人/狼王）
 
 
 --
@@ -420,17 +423,103 @@ guard.py
 添加确认/跳过的私聊消息。
 清理解析和高亮逻辑，保证交互一致性。
 
-
-
-main.py
-
-已集成女巫和猎人的确认控件，无额外 UI 冗余（猎人保持单一确认按钮）。
-
-seer.py
-
-验证预言家仍正常渲染标准按钮，且在移除 put_html 后不再被阻塞。
+main.py：已集成女巫和猎人的确认控件，无额外 UI 冗余（猎人保持单一确认按钮）。
+seer.py：验证预言家仍正常渲染标准按钮，且在移除 put_html 后不再被阻塞。
 
 ## 2025-11-22 补丁更新
 1. main.py now appends统一的 刷新 按钮到每次 input_group，并在点按后立刻取消倒计时与输入，重新渲染当前阶段，不会误触发其他操作。
 2. room.py 引入 _has_active_role()，把被守/被救状态视为仍可行动；夜间角色轮巡改用该判定，确保猎人即使被守卫保护时也会进入“猎人请出现”阶段，能够完成夜晚确认。
 3. Fixed the host-action handler in main.py by properly indenting the '公布昨夜信息' branch so the awaited room.publish_night_info() call sits inside the action check. Re-ran python -m py_compile main.py and python -m py_compile models/room.py; both compile successfully now. Next step could be a quick manual run to ensure the refreshed UI flow behaves as expected.
+
+## 2025-11-22 补丁更新2
+1. Added a protective try/except around the main loop sleep in main.py so page refreshes cancel/ignore the pending await instead of crashing sessions.
+2. Enhanced sheriff signup handling in room.py: zero or all signups now trigger police-badge loss, and a lone signup auto-elects that player without speeches or votes.
+3. Adjusted guard.py so guards still choose targets during守救冲突, but no longer receive the conflict-specific private hint (they just see the usual “你守护了…” message).
+
+## 2025-11-23 补丁更新
+1. room.py
+    当 没有警长存活 时，prompt_sheriff_order() 会随机选择一名存活玩家作为锚点，并随机选择 顺序/逆序，从该锚点开始发言。
+    当 有警长存活 时，房间切换到 GameStage.SHERIFF，等待警长选择。如果警长超时，则回退到同样的随机顺序逻辑。
+    新增辅助函数：
+        _build_queue_from_player()：根据指定玩家构建发言队列。
+        _random_queue_without_sheriff()：在无警长情况下生成随机队列。
+        force_sheriff_order_random()：强制随机选择顺序。
+        set_sheriff_order() 增加 auto 标志，用于区分 手动选择 和 系统自动选择。
+
+2. main.py
+警长选择顺序的提示使用 专用 20 秒倒计时，且计时仅针对警长。
+倒计时结束后自动调用 force_sheriff_order_random()。
+白天状态跟踪确保：
+    只有警长能看到 顺序/逆序按钮。
+    不再出现额外的“确认”按钮。
+
+3. main.py
+主循环顶部的 sleep 现在会吞掉刷新相关的 RuntimeError 和 CancelledError，避免在点击“刷新操作窗口”时（尤其主持人发言期间）导致 PyWebIO 协程崩溃。
+
+4. room.py
+警长选择顺序流程广播优化后的提示：
+    “放逐发言阶段，请警长选择发言顺序”
+    后续：“警长选择顺序/逆序发言，X请发言”
+去掉冗余的初始发言公告。
+无警长或超时情况仍有合理的自动选择提示。
+随机顺序逻辑和倒计时触发的回退使用一致的文本格式，保持统一。
+
+5. 狼队空刀逻辑
+    给狼人面板新增可识别的 放弃 按钮，并在 wolf.py 中把它当成一次明确的弃刀操作处理，确保记录被清理且等待状态只在所有狼人决定后才结束。
+    新增 _abstain 与覆盖 skip，使倒计时触发的自动跳过同样计入已行动，且只有当全部狼人行动或放弃后才落刀；若最终无投票则夜晚自动判定为空刀。
+
+6. 更新遗言顺序
+    Updated models/room.py::start_execution_sequence so if the executed player is a hunter who successfully shoots someone, the遗言队列 includes both the hunter and the victim (hunter first). That way the sequence after the broadcast becomes: hunter skill announcement → hunter发遗言 →被带走的玩家发遗言.
+
+## 2024-11-23 更近补丁2
+1. 狼人自曝机制
+新增**SheriffBombRule** 枚举，支持单爆吞警徽和双爆吞警徽两种规则（默认双爆）
+狼人在以下阶段会显示红色"自曝"按键：
+警长竞选发言（包括PK发言）
+放逐发言阶段
+推迟退水阶段（双爆模式第二次竞选）
+自曝后立即结束当前发言、跳过后续发言和投票，该狼人出局并发表遗言
+单爆模式下首日任意狼自曝即警徽流失
+双爆模式下，首日自曝推迟警长竞选至次日，上警名单保留；10秒退水窗口结束后继续投票；第二天若再有狼自曝则警徽流失
+2. 房间配置新增自曝规则
+所有房间预设（3人、6人、7人测试板）默认配置为双爆吞警徽
+房主可在创建房间和房间配置界面选择规则：
+单爆吞警徽
+双爆吞警徽（默认）
+规则持久化到 Room.sheriff_bomb_rule 字段
+3. 警徽移交与撕毁
+警长死亡时，在遗言阶段显示专属操作面板：
+可选择任意存活玩家移交警徽（按座位号列表）
+或选择撕毁警徽（红色按钮）
+移交成功后新警长立即生效；撕毁后本局无警长
+警长因任何原因死亡（包括自曝）均可使用此功能
+4. 推迟的警长竞选
+双爆模式首日自曝后，次日自动恢复警长竞选
+系统公告："继续未完成的警长竞选"
+保留首日上警名单，给予10秒退水时间
+退水结束后直接投票，不再重复发言
+若退水后只剩一人，自动当选；若无人则警徽流失
+5. 状态跟踪与清理
+Room 新增字段：
+sheriff_bomb_rule: 配置的自曝规则
+sheriff_badge_destroyed: 警徽是否已摧毁
+pending_day_bombs: 自曝队列（用于跨阶段处理）
+sheriff_deferred_active/payload/bomb_count: 推迟竞选跟踪
+每日结束时清理相关标记，避免状态污染
+警长死亡且未移交时自动清除警长记录
+6. 用户界面优化
+自曝按键仅在允许时显示（红色、醒目）
+警徽移交面板根据实时存活玩家动态生成按钮
+推迟竞选退水阶段自动启动10秒倒计时（与其他操作一致）
+所有相关操作取消倒计时任务，避免冲突
+7. 兼容性与稳定性
+所有改动向前兼容现有游戏流程
+无 linter 或编译错误（已通过静态检查）
+日志系统集成自曝、移交等关键事件广播
+退水倒计时与主循环异步协调，不阻塞其他玩家
+
+## 2025-11-24 更新补丁3
+- 增加rules.md 介绍游戏规则
+- 增加roles.md 介绍角色
+- guard.py: 去掉了“守卫无法防御毒药”的早退。现在守卫即便选择了当晚被女巫毒的玩家，操作也会正常记录并提示已守护，但不会改变该玩家的毒杀结局（仍在结算时死亡），满足“可以守但挡不住毒”的要求。
+- witch.py: 给确认毒药逻辑引入 Role 判断，一旦目标是猎人就立即把 target.skill['can_shoot'] 置为 False。这样猎人在夜里收到的状态提醒会明确显示“不能开枪”，且遗言阶段也无法进入开枪模式。

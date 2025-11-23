@@ -13,7 +13,7 @@ from pywebio.output import use_scope
 from pywebio.session import defer_call, get_current_task_id, get_current_session
 
 
-from enums import WitchRule, GuardRule, Role, GameStage, PlayerStatus
+from enums import WitchRule, GuardRule, SheriffBombRule, Role, GameStage, PlayerStatus
 from models.room import Room
 from models.user import User
 from utils import add_cancel_button, get_interface_ip
@@ -74,7 +74,8 @@ async def main():
                 'citizen_num': 1,
                 'god_citizen': ['预言家'],
                 'witch_rule': '仅第一夜可自救',
-                'guard_rule': '同时被守被救时，对象死亡'
+                'guard_rule': '同时被守被救时，对象死亡',
+                'sheriff_bomb_rule': '双爆吞警徽'
             }
         elif preset_data['preset'] == '预女猎守1狼6人测试':
             room_config = {
@@ -83,7 +84,8 @@ async def main():
                 'citizen_num': 1,
                 'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
                 'witch_rule': '仅第一夜可自救',
-                'guard_rule': '同时被守被救时，对象死亡'
+                'guard_rule': '同时被守被救时，对象死亡',
+                'sheriff_bomb_rule': '双爆吞警徽'
             }
         elif preset_data['preset'] == '预女猎守2狼7人测试':
             room_config = {
@@ -92,7 +94,8 @@ async def main():
                 'citizen_num': 1,
                 'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
                 'witch_rule': '仅第一夜可自救',
-                'guard_rule': '同时被守被救时，对象死亡'
+                'guard_rule': '同时被守被救时，对象死亡',
+                'sheriff_bomb_rule': '双爆吞警徽'
             }
         else:
             # 自定义配置
@@ -104,6 +107,7 @@ async def main():
                          options=Role.as_god_citizen_options()),
                 select(name='witch_rule', label='女巫解药规则', options=WitchRule.as_options()),
                 select(name='guard_rule', label='守卫规则', options=GuardRule.as_options()),
+                select(name='sheriff_bomb_rule', label='自曝警徽规则', options=SheriffBombRule.as_options(), value=SheriffBombRule.DOUBLE_LOSS.value),
             ])
         room = Room.alloc(room_config)
     elif data['cmd'] == '加入房间':
@@ -143,7 +147,11 @@ async def main():
         )
 
     while True:
-        await asyncio.sleep(0.2)
+        try:
+            await asyncio.sleep(0.2)
+        except (RuntimeError, asyncio.CancelledError):
+            # Refreshing the PyWebIO page may cancel the pending sleep; ignore and continue
+            continue
 
         # 非夜晚房主操作
         host_ops = []
@@ -153,14 +161,6 @@ async def main():
             if not room.started:
                 host_ops += [
                     actions(name='host_op', buttons=['开始游戏', '房间配置'], help_text='你是房主')
-                ]
-            elif room.stage == GameStage.Day and room.round > 0:
-                host_ops += [
-                    actions(
-                        name='host_vote_op',
-                        buttons=[f"{user.seat}. {user.nick}" for user in room.list_alive_players()],  # 添加座位号
-                        help_text='你是房主，本轮需要选择出局玩家'
-                    )
                 ]
             if room.stage in (GameStage.SHERIFF, GameStage.SPEECH):
                 if sheriff_state.get('phase') == 'await_vote':
@@ -279,6 +279,47 @@ async def main():
                         )
                     ]
 
+                if (
+                    room.skill.get('sheriff_captain') == current_user.nick and
+                    not current_user.skill.get('badge_action_taken', False)
+                ):
+                    alive_players = [u for u in room.list_alive_players() if u.nick != current_user.nick]
+                    badge_buttons = []
+                    for p in alive_players:
+                        seat = p.seat if p.seat is not None else '?'
+                        badge_buttons.append({'label': f'交给{seat}号{p.nick}', 'value': f'transfer:{p.nick}'})
+                    badge_buttons.append({'label': '撕毁警徽', 'value': 'destroy', 'color': 'danger'})
+                    user_ops += [
+                        actions(
+                            name='sheriff_badge_action',
+                            buttons=badge_buttons,
+                            help_text='选择移交对象或撕毁警徽'
+                        )
+                    ]
+
+            # === 警长选择发言顺序 ===
+            if (
+                day_state.get('phase') == 'await_sheriff_order' and
+                room.skill.get('sheriff_captain') == current_user.nick and
+                current_user.status == PlayerStatus.ALIVE
+            ):
+                user_ops += [
+                    actions(
+                        name='sheriff_set_order',
+                        buttons=['顺序发言', '逆序发言'],
+                        help_text='请选择今日发言顺序'
+                    )
+                ]
+
+            if room.can_wolf_self_bomb(current_user):
+                user_ops += [
+                    actions(
+                        name='wolf_self_bomb',
+                        buttons=[{'label': '自曝', 'value': 'boom', 'color': 'danger'}],
+                        help_text='立即结束当前阶段并出局'
+                    )
+                ]
+
             # === 发言阶段 ===
             if (
                 hasattr(room, 'current_speaker') and
@@ -316,12 +357,14 @@ async def main():
             continue
 
         if ops:
+            NIGHT_STAGES = {GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.DREAMER}
             # 夜间操作显示 20s 倒计时与确认键
             if room.stage is not None:
                 # 仅在有玩家操作时（夜晚阶段）追加确认键
                 # 避免重复添加：只在 user_ops 非空且为夜间角色时加入确认
                 try:
                     if (
+                        room.stage in NIGHT_STAGES and
                         current_user.role_instance and
                         current_user.role_instance.can_act_at_night and
                         current_user.role_instance.needs_global_confirm
@@ -331,7 +374,6 @@ async def main():
                     pass
 
             # 开启倒计时任务（每个玩家单独）仅在夜间角色可行动时启动
-            NIGHT_STAGES = {GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.DREAMER}
             DAY_TIMER_STAGES = {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE}
             COUNTDOWN_STAGES = NIGHT_STAGES | DAY_TIMER_STAGES
             
@@ -340,6 +382,7 @@ async def main():
                 countdown_seconds = 10
             else:
                 countdown_seconds = 20
+
             
             async def _countdown(user, seconds=20):
                 try:
@@ -367,6 +410,13 @@ async def main():
                                 user.room.record_sheriff_choice(user, '不上警')
                             elif phase in ('vote', 'pk_vote') and user.skill.get('sheriff_vote_pending', False):
                                 user.room.record_sheriff_ballot(user, '弃票')
+                            elif phase == 'deferred_withdraw':
+                                user.room.complete_deferred_withdraw()
+                            elif (
+                                user.room.day_state.get('phase') == 'await_sheriff_order' and
+                                user.nick == user.room.skill.get('sheriff_captain')
+                            ):
+                                user.room.force_sheriff_order_random()
                         elif user.room.stage == GameStage.LAST_WORDS:
                             day_state_inner = getattr(user.room, 'day_state', {})
                             current_last = day_state_inner.get('current_last_word')
@@ -430,6 +480,12 @@ async def main():
                         if phase == 'signup' and not current_user.skill.get('sheriff_voted', False):
                             should_start = True
                         elif phase in ('vote', 'pk_vote') and current_user.skill.get('sheriff_vote_pending', False):
+                            should_start = True
+                        elif phase == 'deferred_withdraw':
+                            active_candidates = room.get_active_sheriff_candidates() if hasattr(room, 'get_active_sheriff_candidates') else []
+                            if current_user.nick in active_candidates and not current_user.skill.get('sheriff_withdrawn', False):
+                                should_start = True
+                        elif day_state.get('phase') == 'await_sheriff_order' and room.skill.get('sheriff_captain') == current_user.nick:
                             should_start = True
                     elif room.stage == GameStage.LAST_WORDS:
                         if day_state.get('current_last_word') == current_user.nick:
@@ -522,7 +578,9 @@ async def main():
                 select(name='witch_rule', label='女巫解药规则', options=WitchRule.as_options(),
                       value=list(WitchRule.mapping().keys())[list(WitchRule.mapping().values()).index(room.witch_rule)]),
                 select(name='guard_rule', label='守卫规则', options=GuardRule.as_options(),
-                      value=list(GuardRule.mapping().keys())[list(GuardRule.mapping().values()).index(room.guard_rule)]),
+                    value=list(GuardRule.mapping().keys())[list(GuardRule.mapping().values()).index(room.guard_rule)]),
+                select(name='sheriff_bomb_rule', label='自曝警徽规则', options=SheriffBombRule.as_options(),
+                    value=list(SheriffBombRule.mapping().keys())[list(SheriffBombRule.mapping().values()).index(room.sheriff_bomb_rule)]),
             ], cancelable=True)
             if room_config is None:
                 current_user.send_msg('⚠️ 房间配置已取消。')
@@ -538,15 +596,8 @@ async def main():
             room.roles_pool = copy(roles)
             room.witch_rule = WitchRule.from_option(room_config['witch_rule'])
             room.guard_rule = GuardRule.from_option(room_config['guard_rule'])
+            room.sheriff_bomb_rule = SheriffBombRule.from_option(room_config['sheriff_bomb_rule'])
             room.broadcast_msg(f'房间配置已更新：{room.desc()}')
-        if data.get('host_vote_op'):
-            voted_nick = data.get('host_vote_op').split('.')[-1].strip()
-            await room.vote_kill(voted_nick)
-            voted_out = room.players.get(voted_nick)  # 修改为 voted_nick
-            if voted_out and voted_out.role == Role.HUNTER and voted_out.skill.get('can_shoot', False):
-                voted_out.send_msg('🔫 你是猎人，可以立即开枪！')
-                # 这里可以添加猎人开枪按钮逻辑
-
         if data.get('sheriff_host_action') and current_user is room.get_host():
             action = data.get('sheriff_host_action')
             if action == '警长投票':
@@ -599,6 +650,11 @@ async def main():
             if task:
                 task.cancel()
 
+        if data.get('sheriff_set_order'):
+            msg = room.set_sheriff_order(current_user, data.get('sheriff_set_order'))
+            if msg:
+                current_user.send_msg(msg)
+
         if data.get('last_word_skill'):
             room.handle_last_word_skill_choice(current_user, data.get('last_word_skill'))
             task = current_user.skill.pop('countdown_task', None)
@@ -611,6 +667,11 @@ async def main():
             if task:
                 task.cancel()
 
+        if data.get('sheriff_badge_action'):
+            msg = room.handle_sheriff_badge_action(current_user, data.get('sheriff_badge_action'))
+            if msg:
+                current_user.send_msg(msg)
+
         if data.get('exile_vote'):
             selection = data.get('exile_vote')
             target = '弃票' if selection == '弃票' else selection.split('.', 1)[-1].strip()
@@ -618,6 +679,16 @@ async def main():
             task = current_user.skill.pop('countdown_task', None)
             if task:
                 task.cancel()
+
+        if data.get('wolf_self_bomb'):
+            msg = room.handle_wolf_self_bomb(current_user)
+            if msg:
+                current_user.send_msg(msg)
+            task = current_user.skill.pop('countdown_task', None)
+            if task:
+                task.cancel()
+            await asyncio.sleep(0.3)
+            continue
 
         if data.get('speech_done') and current_user.nick == room.current_speaker:
             current_user.skip()

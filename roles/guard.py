@@ -38,7 +38,7 @@ class Guard(RoleBase):
                 btn['color'] = 'warning'
             buttons.append(btn)
 
-        buttons.append({'label': '取消', 'type': 'cancel'})
+        buttons.append({'label': '放弃', 'type': 'cancel'})
         return [
             actions(
                 name='guard_team_op',
@@ -49,7 +49,7 @@ class Guard(RoleBase):
 
     @player_action
     def protect_player(self, nick: str) -> Optional[str]:
-        if nick == '取消':
+        if nick in ('取消', '放弃'):
             return None
         
         # 解析昵称：处理 "seat. nick" 格式
@@ -71,13 +71,12 @@ class Guard(RoleBase):
         target = self.user.room.players.get(nick)
         if not target:
             return '查无此人'
-        if target.status == PlayerStatus.PENDING_POISON:
-            return '守卫无法防御毒药'
-        if target.status == PlayerStatus.PENDING_HEAL and self.user.room.guard_rule == GuardRule.MED_CONFLICT:
-            target.status = PlayerStatus.PENDING_DEAD
-            return '守救冲突，目标死亡'
-
-        target.status = PlayerStatus.PENDING_GUARD
+        protected_from_poison = target.status == PlayerStatus.PENDING_POISON
+        if not protected_from_poison:
+            if target.status == PlayerStatus.PENDING_HEAL and self.user.room.guard_rule == GuardRule.MED_CONFLICT:
+                target.status = PlayerStatus.PENDING_DEAD
+            else:
+                target.status = PlayerStatus.PENDING_GUARD
         self.user.skill['last_protect'] = nick
         self.user.skill['acted_this_stage'] = True
         seat = target.seat if target else '?'
@@ -92,3 +91,6 @@ class Guard(RoleBase):
             self.user.send_msg('今晚，你没有操作')
             self.user.skill['guard_action_notified'] = True
         self.user.skill.pop('guard_stage_ready', None)
+        self.user.skill['acted_this_stage'] = True
+        if self.user.room:
+            self.user.room.waiting = False

@@ -3,7 +3,7 @@ from typing import Optional, List
 from pywebio.input import actions, radio
 from utils import add_cancel_button
 from .base import RoleBase, player_action
-from enums import PlayerStatus, GameStage, WitchRule
+from enums import PlayerStatus, GameStage, WitchRule, Role
 
 class Witch(RoleBase):
     name = '女巫'
@@ -180,6 +180,8 @@ class Witch(RoleBase):
             return '目标已死亡'
         
         target.status = PlayerStatus.PENDING_POISON
+        if target.role == Role.HUNTER:
+            target.skill['can_shoot'] = False
         self.user.skill['poison'] = False
         self.user.skill['acted_this_stage'] = True
         self.user.skill.pop('witch_heal_msg_sent', None)
