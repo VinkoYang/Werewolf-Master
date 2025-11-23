@@ -143,7 +143,12 @@ async def main():
         )
 
     while True:
-        await asyncio.sleep(0.2)
+        try:
+            await asyncio.sleep(0.2)
+        except (RuntimeError, asyncio.CancelledError):
+            # Refreshing the PyWebIO page may cancel the pending sleep; ignore and continue
+            await asyncio.sleep(0.1)
+            continue
 
         # 非夜晚房主操作
         host_ops = []

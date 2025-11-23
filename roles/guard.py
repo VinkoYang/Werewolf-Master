@@ -75,9 +75,8 @@ class Guard(RoleBase):
             return '守卫无法防御毒药'
         if target.status == PlayerStatus.PENDING_HEAL and self.user.room.guard_rule == GuardRule.MED_CONFLICT:
             target.status = PlayerStatus.PENDING_DEAD
-            return '守救冲突，目标死亡'
-
-        target.status = PlayerStatus.PENDING_GUARD
+        else:
+            target.status = PlayerStatus.PENDING_GUARD
         self.user.skill['last_protect'] = nick
         self.user.skill['acted_this_stage'] = True
         seat = target.seat if target else '?'

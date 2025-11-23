@@ -448,11 +448,20 @@ class Room:
             up_list = state['up']
             msg = '上警的玩家有：' + ('、'.join(self._format_label(n) for n in up_list) if up_list else '无人')
             self.broadcast_msg(msg)
-            if up_list:
-                self.start_sheriff_speeches()
-            else:
-                self.broadcast_msg('无人上警，跳过警长竞选')
+
+            alive_count = len(alive)
+            if not up_list:
+                self.broadcast_msg('无人上警，警徽流失')
                 self.finish_sheriff_phase(None)
+            elif len(up_list) == alive_count:
+                self.broadcast_msg('全部玩家上警，警徽流失')
+                self.finish_sheriff_phase(None)
+            elif len(up_list) == 1:
+                only_candidate = up_list[0]
+                self.broadcast_msg(f'{self._format_label(only_candidate)}为唯一上警玩家，自动当选警长')
+                self._declare_sheriff(only_candidate)
+            else:
+                self.start_sheriff_speeches()
 
     def start_sheriff_speeches(self):
         state = self.sheriff_state or {}

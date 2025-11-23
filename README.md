@@ -434,3 +434,8 @@ seer.py
 1. main.py now appends统一的 刷新 按钮到每次 input_group，并在点按后立刻取消倒计时与输入，重新渲染当前阶段，不会误触发其他操作。
 2. room.py 引入 _has_active_role()，把被守/被救状态视为仍可行动；夜间角色轮巡改用该判定，确保猎人即使被守卫保护时也会进入“猎人请出现”阶段，能够完成夜晚确认。
 3. Fixed the host-action handler in main.py by properly indenting the '公布昨夜信息' branch so the awaited room.publish_night_info() call sits inside the action check. Re-ran python -m py_compile main.py and python -m py_compile models/room.py; both compile successfully now. Next step could be a quick manual run to ensure the refreshed UI flow behaves as expected.
+
+## 2025-11-22 补丁更新2
+1. Added a protective try/except around the main loop sleep in main.py so page refreshes cancel/ignore the pending await instead of crashing sessions.
+2. Enhanced sheriff signup handling in room.py: zero or all signups now trigger police-badge loss, and a lone signup auto-elects that player without speeches or votes.
+3. Adjusted guard.py so guards still choose targets during守救冲突, but no longer receive the conflict-specific private hint (they just see the usual “你守护了…” message).
