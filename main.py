@@ -279,24 +279,6 @@ async def main():
                         )
                     ]
 
-                if (
-                    room.skill.get('sheriff_captain') == current_user.nick and
-                    not current_user.skill.get('badge_action_taken', False)
-                ):
-                    alive_players = [u for u in room.list_alive_players() if u.nick != current_user.nick]
-                    badge_buttons = []
-                    for p in alive_players:
-                        seat = p.seat if p.seat is not None else '?'
-                        badge_buttons.append({'label': f'交给{seat}号{p.nick}', 'value': f'transfer:{p.nick}'})
-                    badge_buttons.append({'label': '撕毁警徽', 'value': 'destroy', 'color': 'danger'})
-                    user_ops += [
-                        actions(
-                            name='sheriff_badge_action',
-                            buttons=badge_buttons,
-                            help_text='选择移交对象或撕毁警徽'
-                        )
-                    ]
-
             # === 警长选择发言顺序 ===
             if (
                 day_state.get('phase') == 'await_sheriff_order' and
@@ -310,6 +292,44 @@ async def main():
                         help_text='请选择今日发言顺序'
                     )
                 ]
+            if current_user.skill.get('idiot_badge_transfer_required'):
+                candidates = [
+                    u for u in room.list_alive_players()
+                    if u.nick != current_user.nick
+                ]
+                buttons = []
+                for player in candidates:
+                    seat = player.seat if player.seat is not None else '?'
+                    buttons.append({'label': f'交给{seat}号{player.nick}', 'value': player.nick})
+                if not buttons:
+                    buttons.append({'label': '无人可交出，空缺', 'value': 'forfeit', 'color': 'warning'})
+                user_ops += [
+                    actions(
+                        name='idiot_badge_transfer',
+                        buttons=buttons,
+                        help_text='白痴必须立即移交警徽'
+                    )
+                ]
+
+            if (
+                room.stage == GameStage.BADGE_TRANSFER and
+                room.skill.get('sheriff_captain') == current_user.nick and
+                not current_user.skill.get('badge_action_taken', False)
+            ):
+                alive_players = [u for u in room.list_alive_players() if u.nick != current_user.nick]
+                badge_buttons = []
+                for p in alive_players:
+                    seat = p.seat if p.seat is not None else '?'
+                    badge_buttons.append({'label': f'交给{seat}号{p.nick}', 'value': f'transfer:{p.nick}'})
+                badge_buttons.append({'label': '撕毁警徽', 'value': 'destroy', 'color': 'danger'})
+                user_ops += [
+                    actions(
+                        name='sheriff_badge_action',
+                        buttons=badge_buttons,
+                        help_text='请选择移交对象或撕毁警徽（10秒）'
+                    )
+                ]
+
 
             if room.can_wolf_self_bomb(current_user):
                 user_ops += [
@@ -374,11 +394,11 @@ async def main():
                     pass
 
             # 开启倒计时任务（每个玩家单独）仅在夜间角色可行动时启动
-            DAY_TIMER_STAGES = {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE}
+            DAY_TIMER_STAGES = {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE, GameStage.BADGE_TRANSFER}
             COUNTDOWN_STAGES = NIGHT_STAGES | DAY_TIMER_STAGES
             
             # 根据阶段决定倒计时时长
-            if room.stage in {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE}:
+            if room.stage in {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE, GameStage.BADGE_TRANSFER}:
                 countdown_seconds = 10
             else:
                 countdown_seconds = 20
@@ -426,6 +446,9 @@ async def main():
                                     user.room.handle_last_word_skill_choice(user, '放弃')
                                 elif allow_speech and not user.skill.get('last_words_done', False):
                                     user.room.complete_last_word_speech(user)
+                        elif user.room.stage == GameStage.BADGE_TRANSFER:
+                            if user.nick == user.room.skill.get('sheriff_captain') and not user.skill.get('badge_action_taken', False):
+                                user.room.handle_sheriff_badge_action(user, 'destroy')
                         elif user.room.stage in (GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE):
                             if user.skill.get('exile_vote_pending', False):
                                 user.room.record_exile_vote(user, '弃票')
@@ -494,6 +517,12 @@ async def main():
                                 should_start = True
                             elif allow_speech and not current_user.skill.get('last_words_done', False):
                                 should_start = True
+                    elif room.stage == GameStage.BADGE_TRANSFER:
+                        if (
+                            room.skill.get('sheriff_captain') == current_user.nick and
+                            not current_user.skill.get('badge_action_taken', False)
+                        ):
+                            should_start = True
                     elif room.stage in (GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE):
                         if current_user.skill.get('exile_vote_pending', False):
                             should_start = True
@@ -667,10 +696,18 @@ async def main():
             if task:
                 task.cancel()
 
+        if data.get('idiot_badge_transfer'):
+            msg = room.handle_idiot_badge_transfer(current_user, data.get('idiot_badge_transfer'))
+            if msg:
+                current_user.send_msg(msg)
+
         if data.get('sheriff_badge_action'):
             msg = room.handle_sheriff_badge_action(current_user, data.get('sheriff_badge_action'))
             if msg:
                 current_user.send_msg(msg)
+            task = current_user.skill.pop('countdown_task', None)
+            if task:
+                task.cancel()
 
         if data.get('exile_vote'):
             selection = data.get('exile_vote')

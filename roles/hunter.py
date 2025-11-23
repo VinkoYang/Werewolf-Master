@@ -126,13 +126,18 @@ class Hunter(RoleBase):
         if not target_nick:
             self.user.send_msg('未选择目标')
             return
-        target = self.user.room.players.get(target_nick)
+        room = self.user.room
+        target = room.players.get(target_nick)
         if not target or target.status != PlayerStatus.ALIVE:
             self.user.send_msg('目标不可用')
             return
-        target.status = PlayerStatus.DEAD
         seat = target.seat if target.seat is not None else '?'
-        self.user.room.broadcast_msg(f'{seat}号玩家被猎人带走')
+        from_day_execution = (
+            room.stage == GameStage.LAST_WORDS and
+            room.day_state.get('after_last_words') == 'day_skill_to_speech'
+        )
+        room.handle_last_word_skill_kill(target.nick, from_day_execution=from_day_execution)
+        room.broadcast_msg(f'{seat}号玩家被带走')
         self.user.skill['pending_last_skill'] = False
         self.user.skill['last_words_skill_resolved'] = True
         self.user.skill['can_shoot'] = False
