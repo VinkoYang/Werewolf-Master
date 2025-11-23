@@ -71,12 +71,12 @@ class Guard(RoleBase):
         target = self.user.room.players.get(nick)
         if not target:
             return '查无此人'
-        if target.status == PlayerStatus.PENDING_POISON:
-            return '守卫无法防御毒药'
-        if target.status == PlayerStatus.PENDING_HEAL and self.user.room.guard_rule == GuardRule.MED_CONFLICT:
-            target.status = PlayerStatus.PENDING_DEAD
-        else:
-            target.status = PlayerStatus.PENDING_GUARD
+        protected_from_poison = target.status == PlayerStatus.PENDING_POISON
+        if not protected_from_poison:
+            if target.status == PlayerStatus.PENDING_HEAL and self.user.room.guard_rule == GuardRule.MED_CONFLICT:
+                target.status = PlayerStatus.PENDING_DEAD
+            else:
+                target.status = PlayerStatus.PENDING_GUARD
         self.user.skill['last_protect'] = nick
         self.user.skill['acted_this_stage'] = True
         seat = target.seat if target else '?'
