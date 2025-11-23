@@ -34,6 +34,7 @@ class GameStage(Enum):
     SHERIFF = '上警'           # 上警阶段
     SPEECH = '发言'            # 竞选发言阶段
     LAST_WORDS = '遗言'
+    BADGE_TRANSFER = '警徽移交'
     EXILE_SPEECH = '放逐发言'
     EXILE_VOTE = '放逐投票'
     EXILE_PK_SPEECH = '放逐PK发言'
@@ -90,6 +91,7 @@ class Role(PlainEnum):
             '守卫': cls.GUARD,
             '猎人': cls.HUNTER,
             '摄梦人': cls.DREAMER,   # 新增
+            '白痴': cls.IDIOT,
         }
 
     @classmethod

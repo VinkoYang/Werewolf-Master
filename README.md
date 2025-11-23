@@ -37,23 +37,13 @@ python main.py
 ```
 ## 身份介绍
 --
+
+- [狼人杀角色介绍](roles.md)
+
+## 待开发和优化
 1. TTS 目前仅支持 macOS，windows，需要支持更多的平台
 2. 多平台的 Standalone executable
 3. 未对断线重连做支持 (等待 PyWebIO 支持)
-4. 狼人自爆操作
-   1. 在日间自杀，直接进入夜晚
-5. 狼王技能
-    1. 被猎人枪杀/日间投票出局可以带走一个人
-    2. 被女巫毒害无法带人
-6. 猎人技能
-    1. 被狼人杀害/日间投票出局可以带走一个人
-    2. 被女巫毒害无法带人
-7. 赤月使徒
-技能：赤月使徒在自曝身份后将会直接进入黑夜，当晚所有好人的技能都将会被封印。若血月使徒是最后一个被放逐出局的狼人，他可以存活到下一个白天天亮之后才出局
-8.摄梦人
-    好人阵营，神职。每晚必须选择一名除自己以外的玩家成为梦游者（未主动选择则系统随机选择），梦游者不知道自己正在梦游，且免疫一切夜间伤害。连续两晚选择同一名玩家会致其死亡。若摄梦人在夜晚死亡，则梦游者一并死亡。
-    *因梦游出局的猎人、狼王均不能开枪。
-    
 ## 待测试list
 - 测试双爆模式跨日竞选逻辑
 - 验证警徽移交后新警长权限立即生效
@@ -518,8 +508,36 @@ sheriff_deferred_active/payload/bomb_count: 推迟竞选跟踪
 日志系统集成自曝、移交等关键事件广播
 退水倒计时与主循环异步协调，不阻塞其他玩家
 
-## 2025-11-24 更新补丁3
+## 2025-11-23 更新补丁3
 - 增加rules.md 介绍游戏规则
 - 增加roles.md 介绍角色
 - guard.py: 去掉了“守卫无法防御毒药”的早退。现在守卫即便选择了当晚被女巫毒的玩家，操作也会正常记录并提示已守护，但不会改变该玩家的毒杀结局（仍在结算时死亡），满足“可以守但挡不住毒”的要求。
 - witch.py: 给确认毒药逻辑引入 Role 判断，一旦目标是猎人就立即把 target.skill['can_shoot'] 置为 False。这样猎人在夜里收到的状态提醒会明确显示“不能开枪”，且遗言阶段也无法进入开枪模式。
+
+## 2025-11-23 更新补丁4
+room.py：放宽狼人自曝条件，只要处于警长竞选发言或 PK 发言阶段且仍存活的狼人都能看到“自曝”按钮，不再限制为当前发言人。
+room.py：保留先前实现的 10 秒警长投票倒计时（无新增修改，逻辑仍是到时未投票自动记弃票并立即结算）。
+room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩家没有可发动的被动；他们的操作面板仍只有“放弃”按钮，点击后会立刻推进到遗言或下一阶段。
+已更新 witch.py：
+    当女巫已经完成毒/解药动作（acted_this_stage=True）时，skip() 会立即返回，不会再发送“今晚，你没有操作”。
+    若女巫只是选了目标但尚未确认，skip() 会清除暂存目标；只有在确实没有任何操作并选择放弃或超时时，才会发送“今晚，你没有操作”。
+
+## 2025-11-23 更新补丁5
+- Added a new bullet under README.md’s 身份介绍 to describe白痴：日间翻牌免死、必须先处理警徽、后续只能发言不能投票，确保主 README 也反映了最新机制。
+- Updated rules.md in three places: expanded警徽规则、规则盲点第 2 条，以及身份规则里的白痴条目，统一强调翻牌后必须立即移交或撕毁警徽且永久失去投票权。
+- Updated hunter.py so任何被动带走公告现在统一为“Public: X号玩家被带走”，并改用 room.handle_last_word_skill_kill() 记录击杀结果，保证被带走玩家自动进入后续流程。
+- 重构 room.py 的日间放逐流程：start_execution_sequence() 先建立 day_deaths 队列并进入仅技能阶段，handle_last_word_skill_kill() 会把猎人/狼王等被动击杀的目标追加到同一队列。待所有技能结算完成后，_start_day_last_words_speech() 依据该名单开启遗言阶段，遗言顺序即为死亡顺序；阶段收尾时统一把名单上的玩家结算为死亡。
+- 扩展 start_last_words() 以支持“只遗言不技能”的模式，并新增 _prompt_current_last_word_speech() helper，让白天技能阶段与遗言阶段完全分离但依旧沿用原有 UI 逻辑。
+- Added sheriff-eligibility helpers in room.py so players marked for death overnight still count as contestants. All sheriff-specific flows (record_sheriff_choice, candidate lists, PK speeches) now treat “night pending” players as available until昨夜信息公布完毕. main.py uses the new Room.can_participate_in_sheriff() to render the 上警/退水/投票控件 even if该玩家已在夜里死亡但尚未公布。
+- Ensured that if such a pending player当选警长而在公布时阵亡，现有“技能 → 警徽移交 → 遗言”流水线会触发，因为他们被包含在 follow-up 队列里（逻辑已具备，无需额外改动）。
+- Fixed猎人开枪后的流程：hunter.py 现在在确认击杀后调用 room.advance_last_words_progress()，避免房间停留在“被带走”广播。被带走的白痴等玩家会获得正常的被动技能/遗言面板。也顺带确保白痴在日间被动阶段会继续进入移交/遗言流程。
+
+## 2025-11-23 更新补丁6
+- Added build_js_countdown_html() plus helper utilities in main.py that render the global timer as an inline JavaScript widget. Each time the stage transitions (wolves act, sheriff vote,遗言、警徽、放逐投票等), the server now injects a DOM block with a self-contained setInterval that animates the countdown entirely on the browser side—no more reliance on server-side sleep loops.
+- GLOBAL_COUNTDOWN_READY_HTML now clears any existing intervals so the timer can restart cleanly when phases end, and the main loop only re-renders the countdown scope when the phase key actually changes. Idle states reliably show “倒计时：准备中”.
+- Removed the async _global_display_countdown coroutine and all related bookkeeping; countdown tasks are now limited to the per-player input scopes, while the shared header timer is purely client-driven.
+- Added JS-driven global countdowns for speaking phases: last-word speeches now render a 120 s timer, while exile speeches show 120 s per speaker (150 s when it’s the sheriff during the regular exile round). get_global_countdown_context() now reports these durations with speaker-specific labels so everyone watching the board sees the same ticking clock.
+- Expanded the per-player countdown logic in main.py to start timers for exile speeches and to assign context-aware durations (120 s/150 s for speeches, 10 s for skills, 20 s for night actions). When a speech timer expires it auto-calls room.advance_exile_speech(), and cancelling is handled both on timeout and when the speaker clicks “发言完毕”.
+- Updated the stage gating so GameStage.EXILE_SPEECH/EXILE_PK_SPEECH count as timed phases, and ensured last-word speech timers also run for 120 s on both the UI scope and the global display.
+- All speech phases now follow the requested timing: sheriff竞选和PK发言、放逐及放逐PK发言均注入 120 s 倒计时，白天放逐阶段若轮到警长则自动展示 150 s。get_global_countdown_context()、全局 JS 计时器和玩家私有 _countdown() 均统一使用这些时长，并在超时后自动推进相应发言队列（含警长与放逐发言）。
+- 页面标题体验更新：初次打开默认显示 Moon Verdict 狼人杀法官助手，输入昵称后切换为 Moon Verdict： 欢迎<昵称>加入游戏，进入房间后继续沿用现有的动态房间标题逻辑。
