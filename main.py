@@ -4,13 +4,16 @@ import sys
 import platform
 import signal
 import re
+import json
+import html
+from typing import Optional, Tuple
 from logging import getLogger, basicConfig
 
 from pywebio import start_server
 from pywebio.input import *
 from pywebio.output import *
 from pywebio.output import use_scope
-from pywebio.session import defer_call, get_current_task_id, get_current_session
+from pywebio.session import defer_call, get_current_task_id, get_current_session, set_env
 
 
 from enums import WitchRule, GuardRule, SheriffBombRule, Role, GameStage, PlayerStatus
@@ -37,7 +40,173 @@ def make_scope_name(prefix: str, nick: str) -> str:
     return f'{prefix}_{suffix}'
 
 
+def build_page_title(room: Room, user: User) -> str:
+    room_id = room.id if room and room.id is not None else '未分配'
+    seat = user.seat if user.seat is not None else '?'
+    parts = [f'房间:{room_id}', f'{seat}号', user.nick]
+    if room and room.started and user.role_instance:
+        parts.append(user.role_instance.name)
+    return '｜'.join(parts)
+
+
+def format_player_label(room: Room, nick: str) -> str:
+    player = room.players.get(nick) if room else None
+    seat = player.seat if player and player.seat is not None else '?'
+    return f"{seat}号{nick}"
+
+
+def get_global_countdown_context(room: Optional[Room]) -> Tuple[Optional[str], Optional[int], Optional[str]]:
+    if not room or not room.stage:
+        return None, None, None
+
+    stage = room.stage
+    night_labels = {
+        GameStage.WOLF: '狼人行动',
+        GameStage.SEER: '预言家查验',
+        GameStage.WITCH: '女巫操作',
+        GameStage.GUARD: '守卫行动',
+        GameStage.HUNTER: '猎人阶段',
+        GameStage.DREAMER: '摄梦人阶段',
+    }
+    if stage in night_labels:
+        label = f"{night_labels[stage]}倒计时"
+        key = f"{stage.name}_round{room.round}"
+        return key, 20, label
+
+    sheriff_state = getattr(room, 'sheriff_state', {}) or {}
+    day_state = getattr(room, 'day_state', {}) or {}
+
+    if stage == GameStage.SHERIFF:
+        phase = sheriff_state.get('phase')
+        if phase == 'signup':
+            key = f"sheriff_signup_r{room.round}"
+            return key, 10, '上警报名倒计时'
+        if phase == 'deferred_withdraw':
+            key = f"sheriff_deferred_r{room.round}"
+            return key, 10, '退水决定倒计时'
+        if phase == 'vote':
+            key = f"sheriff_vote_r{room.round}"
+            return key, 10, '警长投票倒计时'
+        if phase == 'pk_vote':
+            key = f"sheriff_pk_vote_r{room.round}"
+            return key, 10, '警长PK投票倒计时'
+        if day_state.get('phase') == 'await_sheriff_order':
+            captain = room.skill.get('sheriff_captain') if hasattr(room, 'skill') else None
+            anchor = captain or 'system'
+            key = f"sheriff_order_r{room.round}_{anchor}"
+            return key, 10, '发言顺序倒计时'
+
+    if stage == GameStage.LAST_WORDS:
+        current = day_state.get('current_last_word')
+        if current:
+            player = room.players.get(current)
+            if player:
+                allow_speech = day_state.get('last_words_allow_speech', True)
+                if not player.skill.get('last_words_skill_resolved', False):
+                    key = f"lastwords_skill_r{room.round}_{current}"
+                    label = f"{format_player_label(room, current)}技能抉择倒计时"
+                    return key, 10, label
+                if allow_speech and not player.skill.get('last_words_done', False):
+                    key = f"lastwords_speech_r{room.round}_{current}"
+                    label = f"{format_player_label(room, current)}遗言倒计时"
+                    return key, 120, label
+
+    if stage == GameStage.SPEECH:
+        speaker = getattr(room, 'current_speaker', None)
+        if speaker:
+            phase = sheriff_state.get('phase')
+            is_pk = phase == 'pk_speech'
+            label = f"{format_player_label(room, speaker)}{'警长PK发言' if is_pk else '警长竞选发言'}倒计时"
+            key = f"sheriff_{'pk_' if is_pk else ''}speech_r{room.round}_{speaker}"
+            return key, 120, label
+
+    if stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
+        speaker = getattr(room, 'current_speaker', None)
+        if speaker:
+            seconds = 120
+            if stage == GameStage.EXILE_SPEECH and room.skill.get('sheriff_captain') == speaker:
+                seconds = 150
+            label_prefix = '放逐PK发言' if stage == GameStage.EXILE_PK_SPEECH else '放逐发言'
+            label = f"{format_player_label(room, speaker)}{label_prefix}倒计时"
+            key = f"{stage.name.lower()}_r{room.round}_{speaker}"
+            return key, seconds, label
+
+    if stage == GameStage.BADGE_TRANSFER:
+        captain = room.skill.get('sheriff_captain') if hasattr(room, 'skill') else None
+        anchor = captain or day_state.get('pending_execution') or 'badge'
+        key = f"badge_transfer_r{room.round}_{anchor}"
+        return key, 10, '警徽移交倒计时'
+
+    if stage == GameStage.EXILE_VOTE:
+        key = f"exile_vote_r{room.round}"
+        return key, 10, '放逐投票倒计时'
+
+    if stage == GameStage.EXILE_PK_VOTE:
+        key = f"exile_pk_vote_r{room.round}"
+        return key, 10, '放逐PK投票倒计时'
+
+    return None, None, None
+
+
+GLOBAL_COUNTDOWN_READY_HTML = """
+<div style='margin:8px 0;font-size:26px;font-weight:bold;color:#c00;'>倒计时：准备中</div>
+<script>
+(function() {
+    if (!window.__globalTimerIntervals) return;
+    Object.keys(window.__globalTimerIntervals).forEach(function(k) {
+        clearInterval(window.__globalTimerIntervals[k]);
+        delete window.__globalTimerIntervals[k];
+    });
+})();
+</script>
+"""
+
+
+def make_dom_id(prefix: str, key: str) -> str:
+        safe = re.sub(r'[^0-9A-Za-z_-]', '_', key) or 'timer'
+        return f"{prefix}_{safe}"
+
+
+def build_js_countdown_html(label: str, seconds: int, key: str) -> str:
+        container_id = make_dom_id('global_timer', key)
+        seconds_json = json.dumps(seconds)
+        label_html = html.escape(label)
+        return f"""
+<div id='{container_id}' style='margin:8px 0;font-size:26px;font-weight:bold;color:#c00;'>
+    <span class='global-countdown-label'>{label_html}</span>：<span class='global-countdown-value'>{seconds}s</span>
+</div>
+<script>
+(function() {{
+    var container = document.getElementById('{container_id}');
+    if (!container) return;
+    window.__globalTimerIntervals = window.__globalTimerIntervals || {{}};
+    Object.keys(window.__globalTimerIntervals).forEach(function(k) {{
+        clearInterval(window.__globalTimerIntervals[k]);
+        delete window.__globalTimerIntervals[k];
+    }});
+    var valueEl = container.querySelector('.global-countdown-value');
+    if (!valueEl) return;
+    var remaining = {seconds_json};
+    function render(val) {{ valueEl.textContent = val; }}
+    render(remaining + 's');
+    var timer = setInterval(function() {{
+        remaining -= 1;
+        if (remaining <= 0) {{
+            render('已结束');
+            clearInterval(timer);
+            delete window.__globalTimerIntervals['{container_id}'];
+            return;
+        }}
+        render(remaining + 's');
+    }}, 1000);
+    window.__globalTimerIntervals['{container_id}'] = timer;
+}})();
+</script>
+"""
+
+
 async def main():
+    set_env(title="Moon Verdict 狼人杀法官助手")
     put_markdown("## 狼人杀法官")
     current_user = User.alloc(
         await input('请输入你的昵称',
@@ -46,10 +215,17 @@ async def main():
                     help_text='请使用一个易于分辨的名称'),
         get_current_task_id()
     )
+    welcome_title = f"Moon Verdict： 欢迎{current_user.nick}加入游戏"
+    set_env(title=welcome_title)
 
     @defer_call
     def on_close():
         User.free(current_user)
+        task = current_user.skill.pop('countdown_task', None)
+        if task:
+            task.cancel()
+        current_user.skill.pop('global_display_seen_key', None)
+        current_user.skill.pop('global_display_idle', None)
 
     put_text(f'你好，{current_user.nick}')
     data = await input_group(
@@ -121,10 +297,15 @@ async def main():
 
     room.add_player(current_user)
 
+    with use_scope(make_scope_name('global_countdown', current_user.nick), clear=True):
+        put_html(GLOBAL_COUNTDOWN_READY_HTML)
+
     def trigger_manual_refresh():
         task = current_user.skill.pop('countdown_task', None)
         if task:
             task.cancel()
+        current_user.skill.pop('global_display_seen_key', None)
+        current_user.skill.pop('global_display_idle', None)
         try:
             get_current_session().send_client_event({
                 'event': 'from_cancel',
@@ -146,12 +327,43 @@ async def main():
             onclick=lambda _: trigger_manual_refresh()
         )
 
+    last_title = welcome_title
+
     while True:
         try:
             await asyncio.sleep(0.2)
         except (RuntimeError, asyncio.CancelledError):
             # Refreshing the PyWebIO page may cancel the pending sleep; ignore and continue
             continue
+
+        try:
+            new_title = build_page_title(room, current_user)
+            if new_title != last_title:
+                set_env(title=new_title)
+                last_title = new_title
+        except Exception:
+            pass
+
+        try:
+            display_key, display_seconds, display_label = get_global_countdown_context(room)
+            seen_key = current_user.skill.get('global_display_seen_key')
+            is_idle = current_user.skill.get('global_display_idle', False)
+            scope_name = make_scope_name('global_countdown', current_user.nick)
+            if not display_key or not display_seconds or not display_label:
+                if seen_key is not None or not is_idle:
+                    with use_scope(scope_name, clear=True):
+                        put_html(GLOBAL_COUNTDOWN_READY_HTML)
+                current_user.skill.pop('global_display_seen_key', None)
+                current_user.skill['global_display_idle'] = True
+            else:
+                current_user.skill['global_display_idle'] = False
+                if seen_key != display_key:
+                    html = build_js_countdown_html(display_label, display_seconds, display_key)
+                    with use_scope(scope_name, clear=True):
+                        put_html(html)
+                    current_user.skill['global_display_seen_key'] = display_key
+        except Exception:
+            pass
 
         # 非夜晚房主操作
         host_ops = []
@@ -400,15 +612,8 @@ async def main():
                     pass
 
             # 开启倒计时任务（每个玩家单独）仅在夜间角色可行动时启动
-            DAY_TIMER_STAGES = {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE, GameStage.BADGE_TRANSFER}
+            DAY_TIMER_STAGES = {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE, GameStage.BADGE_TRANSFER, GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH, GameStage.SPEECH}
             COUNTDOWN_STAGES = NIGHT_STAGES | DAY_TIMER_STAGES
-            
-            # 根据阶段决定倒计时时长
-            if room.stage in {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE, GameStage.BADGE_TRANSFER}:
-                countdown_seconds = 10
-            else:
-                countdown_seconds = 20
-
             
             async def _countdown(user, seconds=20):
                 try:
@@ -458,6 +663,12 @@ async def main():
                         elif user.room.stage in (GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE):
                             if user.skill.get('exile_vote_pending', False):
                                 user.room.record_exile_vote(user, '弃票')
+                        elif user.room.stage == GameStage.SPEECH:
+                            if getattr(user.room, 'current_speaker', None) == user.nick:
+                                user.room.advance_sheriff_speech(user.nick)
+                        elif user.room.stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
+                            if getattr(user.room, 'current_speaker', None) == user.nick:
+                                user.room.advance_exile_speech()
                         else:
                             pending_keys = ['wolf_choice', 'pending_protect', 'pending_dream_target', 'pending_target']
                             has_pending = any(user.skill.get(k) for k in pending_keys)
@@ -504,38 +715,62 @@ async def main():
             if current_user.skill.get('countdown_task') is None and is_countdown_stage:
                 try:
                     should_start = False
+                    countdown_seconds = None
                     if room.stage == GameStage.SHERIFF:
                         phase = sheriff_state.get('phase')
                         if phase == 'signup' and not current_user.skill.get('sheriff_voted', False):
                             should_start = True
+                            countdown_seconds = 10
                         elif phase in ('vote', 'pk_vote') and current_user.skill.get('sheriff_vote_pending', False):
                             should_start = True
+                            countdown_seconds = 10
                         elif phase == 'deferred_withdraw':
                             active_candidates = room.get_active_sheriff_candidates() if hasattr(room, 'get_active_sheriff_candidates') else []
                             if current_user.nick in active_candidates and not current_user.skill.get('sheriff_withdrawn', False):
                                 should_start = True
+                                countdown_seconds = 10
                         elif day_state.get('phase') == 'await_sheriff_order' and room.skill.get('sheriff_captain') == current_user.nick:
                             should_start = True
+                            countdown_seconds = 10
                     elif room.stage == GameStage.LAST_WORDS:
                         if day_state.get('current_last_word') == current_user.nick:
                             allow_speech = day_state.get('last_words_allow_speech', True)
                             if not current_user.skill.get('last_words_skill_resolved', False):
                                 should_start = True
+                                countdown_seconds = 10
                             elif allow_speech and not current_user.skill.get('last_words_done', False):
                                 should_start = True
+                                countdown_seconds = 120
                     elif room.stage == GameStage.BADGE_TRANSFER:
                         if (
                             room.skill.get('sheriff_captain') == current_user.nick and
                             not current_user.skill.get('badge_action_taken', False)
                         ):
                             should_start = True
+                            countdown_seconds = 10
                     elif room.stage in (GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE):
                         if current_user.skill.get('exile_vote_pending', False):
                             should_start = True
+                            countdown_seconds = 10
+                    elif room.stage == GameStage.SPEECH:
+                        if getattr(room, 'current_speaker', None) == current_user.nick:
+                            should_start = True
+                            countdown_seconds = 120
+                    elif room.stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
+                        if getattr(room, 'current_speaker', None) == current_user.nick:
+                            should_start = True
+                            if room.stage == GameStage.EXILE_SPEECH and room.skill.get('sheriff_captain') == current_user.nick:
+                                countdown_seconds = 150
+                            else:
+                                countdown_seconds = 120
                     elif current_user.role_instance and current_user.role_instance.can_act_at_night:
                         should_start = True
+                        countdown_seconds = 20
 
                     if should_start:
+                        seconds = countdown_seconds
+                        if seconds is None:
+                            seconds = 10 if room.stage in DAY_TIMER_STAGES else 20
                         # 清理房间日志中遗留的倒计时私聊信息，避免旧条目继续显示在 Private 区
                         try:
                             if current_user.room and isinstance(current_user.room.log, list):
@@ -544,7 +779,7 @@ async def main():
                         except Exception:
                             pass
 
-                        task = asyncio.create_task(_countdown(current_user, countdown_seconds))
+                        task = asyncio.create_task(_countdown(current_user, seconds))
                         current_user.skill['countdown_task'] = task
                 except Exception:
                     pass
@@ -734,6 +969,9 @@ async def main():
             continue
 
         if data.get('speech_done') and current_user.nick == room.current_speaker:
+            task = current_user.skill.pop('countdown_task', None)
+            if task:
+                task.cancel()
             current_user.skip()
             if room.stage == GameStage.SPEECH:
                 room.advance_sheriff_speech(current_user.nick)
