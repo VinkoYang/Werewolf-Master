@@ -25,6 +25,7 @@ from roles.guard import Guard
 from roles.hunter import Hunter
 from roles.dreamer import Dreamer
 from roles.idiot import Idiot
+from roles.half_blood import HalfBlood
 
 role_classes = {
     Role.CITIZEN: Citizen,
@@ -36,6 +37,7 @@ role_classes = {
     Role.HUNTER: Hunter,
     Role.DREAMER: Dreamer,
     Role.IDIOT: Idiot,
+    Role.HALF_BLOOD: HalfBlood,
 }
 
 @dataclass
@@ -115,6 +117,25 @@ class Room:
         self.broadcast_msg(f"============ 第 {self.round} 晚 ============")
         self.broadcast_msg('天黑请闭眼', tts=True)
         await asyncio.sleep(3)
+
+        # ---------- 混血儿第一夜认亲 ----------
+        if self.round == 1 and self._has_configured_role([Role.HALF_BLOOD]):
+            self.stage = GameStage.HALF_BLOOD
+            for user in self.players.values():
+                user.skill['acted_this_stage'] = False
+            self.broadcast_msg('混血儿请出现', tts=True)
+            await asyncio.sleep(1)
+
+            if self._has_active_role([Role.HALF_BLOOD]):
+                self.waiting = True
+                await self.wait_for_player()
+                self._ensure_half_blood_choices()
+            else:
+                await asyncio.sleep(5)
+
+            await asyncio.sleep(1)
+            self.broadcast_msg('混血儿请闭眼', tts=True)
+            await asyncio.sleep(2)
 
         # ---------- 狼人 ----------
         self.stage = GameStage.WOLF
@@ -327,6 +348,17 @@ class Room:
             user.role in roles for user in self.players.values()
         )
 
+    def _ensure_half_blood_choices(self):
+        for user in self.players.values():
+            if user.role != Role.HALF_BLOOD or user.status == PlayerStatus.DEAD:
+                continue
+            role_inst = getattr(user, 'role_instance', None)
+            if role_inst and hasattr(role_inst, 'ensure_choice'):
+                try:
+                    role_inst.ensure_choice()
+                except Exception:
+                    logger.exception('混血儿认亲结算失败')
+
     async def wait_for_player(self):
         timeout = 20
         start = asyncio.get_event_loop().time()
@@ -350,8 +382,14 @@ class Room:
         self.log.append((None, LogCtrl.RemoveInput))
 
     async def check_game_end(self):
-        wolves = [u for u in self.list_alive_players() if u.role in (Role.WOLF, Role.WOLF_KING)]
-        goods = [u for u in self.list_alive_players() if u.role not in (Role.WOLF, Role.WOLF_KING)]
+        alive = self.list_alive_players()
+        wolves = [u for u in alive if u.role in (Role.WOLF, Role.WOLF_KING)]
+        goods = [u for u in alive if u.role not in (Role.WOLF, Role.WOLF_KING)]
+        half_bloods = [u for u in goods if u.role == Role.HALF_BLOOD]
+        for hb in half_bloods:
+            if hb.skill.get('half_blood_camp', 'good') == 'wolf':
+                goods = [g for g in goods if g.nick != hb.nick]
+                wolves.append(hb)
         if not wolves:
             await self.end_game("好人阵营获胜！狼人全部出局")
         elif len(wolves) >= len(goods):

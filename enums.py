@@ -25,6 +25,7 @@ class PlayerStatus(PlainEnum):
 # 游戏阶段（白天、狼人、预言家、女巫、守卫、猎人、摄梦人、上警、竞选发言）
 class GameStage(Enum):
     Day = 'Day'
+    HALF_BLOOD = '混血儿'
     WOLF = '狼人'
     SEER = '预言家'
     WITCH = '女巫'
@@ -53,6 +54,7 @@ class Role(PlainEnum):
     CITIZEN = '平民'
     DREAMER = '摄梦人'
     IDIOT = '白痴'
+    HALF_BLOOD = '混血儿'
 
     @classmethod
     def as_god_citizen_options(cls) -> list:
@@ -93,6 +95,7 @@ class Role(PlainEnum):
             '猎人': cls.HUNTER,
             '摄梦人': cls.DREAMER,   # 新增
             '白痴': cls.IDIOT,
+            '混血儿': cls.HALF_BLOOD,
         }
 
     @classmethod

@@ -2,7 +2,7 @@
 from typing import Optional, List
 from pywebio.input import actions
 from .base import RoleBase, player_action
-from enums import PlayerStatus, GameStage
+from enums import PlayerStatus, GameStage, Role
 
 class Seer(RoleBase):
     name = '预言家'
@@ -66,7 +66,6 @@ class Seer(RoleBase):
 
     @player_action
     def confirm(self) -> Optional[str]:
-        from enums import Role
         target_nick = self.user.skill.pop('pending_target', None)
         if not target_nick:
             return '未选择目标'
@@ -75,7 +74,9 @@ class Seer(RoleBase):
             return '查无此人'
         
         # 判断目标阵营：狼人或好人
-        if target.role in (Role.WOLF, Role.WOLF_KING):
+        if target.role == Role.HALF_BLOOD:
+            camp = '好人'
+        elif target.role in (Role.WOLF, Role.WOLF_KING):
             camp = '狼人'
         else:
             camp = '好人'
