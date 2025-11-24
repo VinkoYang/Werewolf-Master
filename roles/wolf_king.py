@@ -12,11 +12,11 @@ class WolfKing(Wolf):
     team = '狼人阵营'
     can_act_at_night = True
     can_act_at_day = True
+    needs_global_confirm = False
 
     def input_handlers(self):
         handlers = super().input_handlers()
         handlers.update({
-            'wolfking_confirm': self.confirm,
             'wolfking_shoot_target': self.select_shoot_target,
             'wolfking_shoot_confirm': self.confirm_shoot,
         })
@@ -40,7 +40,10 @@ class WolfKing(Wolf):
 
         room = self.user.room
         if room and room.stage == GameStage.WOLF:
-            return super().get_actions()
+            ops = list(super().get_actions())
+            if not ops:
+                return []
+            return ops + [self._build_confirm_action('确认当前选择（20秒内）')]
 
         if room and room.stage == GameStage.WOLF_KING and self.should_act():
             if not self.user.skill.get('wolfking_msg_sent', False):
@@ -48,13 +51,7 @@ class WolfKing(Wolf):
                 status_msg = "可以开枪" if can_shoot else "不可以开枪"
                 self.user.send_msg(f'🔫 你的开枪状态：{status_msg}')
                 self.user.skill['wolfking_msg_sent'] = True
-            return [
-                actions(
-                    name='wolfking_confirm',
-                    buttons=['确认'],
-                    help_text='点击确认结束狼王阶段'
-                )
-            ]
+            return [self._build_confirm_action('确认枪状态（20秒内）')]
         return []
 
     @player_action
@@ -150,3 +147,10 @@ class WolfKing(Wolf):
         self.user.skill['last_words_skill_resolved'] = True
         self.user.skill['can_shoot'] = False
         room.advance_last_words_progress(self.user)
+
+    def _build_confirm_action(self, help_text: str):
+        return actions(
+            name='confirm_action',
+            buttons=['确认'],
+            help_text=help_text
+        )

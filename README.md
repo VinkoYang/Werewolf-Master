@@ -541,3 +541,8 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 - Updated the stage gating so GameStage.EXILE_SPEECH/EXILE_PK_SPEECH count as timed phases, and ensured last-word speech timers also run for 120 s on both the UI scope and the global display.
 - All speech phases now follow the requested timing: sheriff竞选和PK发言、放逐及放逐PK发言均注入 120 s 倒计时，白天放逐阶段若轮到警长则自动展示 150 s。get_global_countdown_context()、全局 JS 计时器和玩家私有 _countdown() 均统一使用这些时长，并在超时后自动推进相应发言队列（含警长与放逐发言）。
 - 页面标题体验更新：初次打开默认显示 Moon Verdict 狼人杀法官助手，输入昵称后切换为 Moon Verdict： 欢迎<昵称>加入游戏，进入房间后继续沿用现有的动态房间标题逻辑。
+
+## 2025-11-24 更新补丁1
+1. witch.py: “不使用毒药” now immediately clears the pending target, marks the night as finished, and notifies the player, so the action window closes cleanly without wasting the poison. Poisoning a hunter still removes their gun, but wolf king poisoning no longer alters can_shoot.
+2. room.py: Nightly poison resolution now leaves the wolf king’s can_shoot flag intact, _start_bomb_last_words() keeps the skill prompt enabled so a self-bombing wolf king/hunter can fire, and can_wolf_self_bomb() lets any alive wolf self-bomb during police speeches, PK speeches, exile speeches, and the deferred-withdraw phase. Also added the blocking logic adjustments described above.
+3. Overall behavior: Wolf king poisoned overnight still sees “可以开枪”, self-bombing wolf kings can shoot as expected, and all wolves get the 自曝 button wherever the rules require.

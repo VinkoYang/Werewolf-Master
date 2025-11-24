@@ -148,8 +148,13 @@ class Wolf(RoleBase):
     def _check_all_wolves_acted(self):
         """检查是否所有狼人都已行动，如果是则结束等待"""
         room = self.user.room
-        wolves = [u for u in room.players.values() 
-                 if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE]
+        if hasattr(room, 'get_active_wolves'):
+            wolves = room.get_active_wolves()
+        else:
+            wolves = [
+                u for u in room.players.values()
+                if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE
+            ]
         all_acted = all(u.skill.get('acted_this_stage', False) for u in wolves)
         if all_acted:
             room.waiting = False

@@ -122,8 +122,8 @@ class Room:
             user.skill['acted_this_stage'] = False
         self.broadcast_msg('狼人请出现', tts=True)
         
-        # 发送狼队成员信息给所有狼人
-        wolf_players = [u for u in self.players.values() if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE]
+        # 发送狼队成员信息给所有可行动的狼人
+        wolf_players = self.get_active_wolves()
         if wolf_players:
             labels = [self._format_label(u.nick) for u in wolf_players]
             wolf_info = "狼人玩家是：" + "、".join(labels)
@@ -131,20 +131,22 @@ class Room:
             if wolf_king:
                 wolf_info += f"，狼王是：{self._format_label(wolf_king.nick)}"
 
-            # 发送给所有狼人
             for u in wolf_players:
                 self.send_msg(wolf_info, nick=u.nick)
 
         await asyncio.sleep(2)
-        
-        self.waiting = True
-        await self.wait_for_player()
+
+        if wolf_players:
+            self.waiting = True
+            await self.wait_for_player()
+        else:
+            await asyncio.sleep(1)
 
         # 统一结算狼人击杀（统计票数，最多票者为今晚被刀）
         wolf_votes = self.skill.get('wolf_votes', {})
         kill_target = None
         
-        if wolf_votes:
+        if wolf_players and wolf_votes:
             # 计算每个目标的票数
             counts = {t: len(voters) for t, voters in wolf_votes.items()}
             max_count = max(counts.values())
@@ -177,7 +179,7 @@ class Room:
             # 清理玩家临时选择
             for u in self.players.values():
                 u.skill.pop('wolf_choice', None)
-        else:
+        elif wolf_players:
             # d. 所有狼人都没有选择或点击了"放弃" -> 空刀
             for u in self.players.values():
                 if u.role in (Role.WOLF, Role.WOLF_KING):
@@ -244,7 +246,7 @@ class Room:
                 if not immunity:
                     u.status = PlayerStatus.DEAD
                     dead_this_night.append(u.nick)
-                    if u.role in (Role.HUNTER, Role.WOLF_KING):
+                    if u.role == Role.HUNTER:
                         u.skill['can_shoot'] = False
                 else:
                     u.status = PlayerStatus.ALIVE
@@ -350,6 +352,12 @@ class Room:
     def list_pending_kill_players(self) -> List[User]:
         """返回本夜被标记为待死亡（被狼人击中）的玩家列表"""
         return [u for u in self.players.values() if u.status == PlayerStatus.PENDING_DEAD]
+
+    def get_active_wolves(self) -> List[User]:
+        return [
+            u for u in self.players.values()
+            if u.role in (Role.WOLF, Role.WOLF_KING) and u.status != PlayerStatus.DEAD
+        ]
 
     def is_full(self) -> bool:
         return len(self.players) >= len(self.roles)
@@ -468,11 +476,11 @@ class Room:
                 return True
             return False
         if self.stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
-            return self.current_speaker == user.nick
+            day_phase = (self.day_state or {}).get('phase')
+            return day_phase in ('exile_speech', 'exile_pk_speech')
         state = self.sheriff_state or {}
         if self.stage == GameStage.SHERIFF and state.get('phase') == 'deferred_withdraw':
-            candidates = self.get_active_sheriff_candidates()
-            return user.nick in candidates
+            return True
         return False
 
     def get_active_sheriff_candidates(self) -> List[str]:
@@ -700,7 +708,12 @@ class Room:
             skip_first_skill_msg=True,
             disable_skill_prompt=True
         )
-        self.start_last_words(queue, allow_speech=False, after_stage='badge_transfer')
+        self.start_last_words(
+            queue,
+            allow_speech=False,
+            after_stage='badge_transfer',
+            disable_skill_prompt=False
+        )
 
     def _check_auto_elect(self):
         state = self.sheriff_state or {}
