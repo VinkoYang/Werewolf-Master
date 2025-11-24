@@ -1053,9 +1053,7 @@ class Room:
         skip_first_skill_msg: bool = False,
         disable_skill_prompt: bool = False
     ):
-        valid_queue = [nick for nick in queue if nick in self.players]
-        if randomize and len(valid_queue) > 1:
-            random.shuffle(valid_queue)
+        valid_queue = self._sanitize_last_words_queue(queue, randomize)
         if not valid_queue:
             if after_stage == 'exile_speech':
                 self.start_exile_speech()
@@ -1070,18 +1068,7 @@ class Room:
         self.day_state['last_words_skip_skill_prompt'] = disable_skill_prompt
         self.stage = GameStage.LAST_WORDS
         for nick in valid_queue:
-            player = self.players.get(nick)
-            if not player:
-                continue
-            if disable_skill_prompt:
-                player.skill['last_words_skill_resolved'] = True
-                player.skill['last_words_done'] = False
-                player.skill['pending_last_skill'] = False
-            else:
-                supports_skill = self._player_supports_last_skill(player)
-                player.skill['last_words_skill_resolved'] = not supports_skill
-                player.skill['last_words_done'] = False
-                player.skill['pending_last_skill'] = False
+            self._prepare_last_words_player(self.players.get(nick), disable_skill_prompt)
         if disable_skill_prompt:
             self.day_state['last_word_skill_announced'] = True
         else:
@@ -1123,15 +1110,7 @@ class Room:
             self.day_state['current_last_word'] = queue[0]
             self.day_state['last_word_speech_announced'] = False
             skip_skill_prompt = self.day_state.get('last_words_skip_skill_prompt', False)
-            player = self.players.get(queue[0])
-            if player:
-                if skip_skill_prompt:
-                    player.skill['last_words_skill_resolved'] = True
-                else:
-                    supports_skill = self._player_supports_last_skill(player)
-                    player.skill['last_words_skill_resolved'] = not supports_skill
-                player.skill['last_words_done'] = False
-                player.skill['pending_last_skill'] = False
+            self._prepare_last_words_player(self.players.get(queue[0]), skip_skill_prompt)
             self.day_state['last_word_skill_announced'] = skip_skill_prompt
             self._kickoff_last_word_prompt()
         else:
@@ -1140,6 +1119,7 @@ class Room:
             if next_stage == 'exile_speech':
                 self.prompt_sheriff_order()
             elif next_stage == 'badge_transfer':
+                self._mark_followup_skills_resolved()
                 self._start_badge_transfer_phase()
             elif next_stage == 'end_day':
                 self._finalize_day_execution()
@@ -1165,6 +1145,23 @@ class Room:
             self.day_state['last_word_speech_announced'] = True
             self.day_state['last_word_skill_announced'] = True
 
+    def _sanitize_last_words_queue(self, queue: List[str], randomize: bool) -> List[str]:
+        valid_queue = [nick for nick in queue if nick in self.players]
+        if randomize and len(valid_queue) > 1:
+            random.shuffle(valid_queue)
+        return valid_queue
+
+    def _prepare_last_words_player(self, player: Optional[User], disable_skill_prompt: bool):
+        if not player:
+            return
+        supports_skill = self._player_supports_last_skill(player)
+        if disable_skill_prompt or not supports_skill:
+            player.skill['last_words_skill_resolved'] = True
+        else:
+            player.skill['last_words_skill_resolved'] = False
+        player.skill['last_words_done'] = False
+        player.skill['pending_last_skill'] = False
+
     def _player_supports_last_skill(self, player: Optional[User]) -> bool:
         if not player or not player.role_instance:
             return False
@@ -1172,6 +1169,13 @@ class Room:
         if supports is None:
             return False
         return bool(supports())
+
+    def _mark_followup_skills_resolved(self):
+        followup = self.day_state.get('pending_badge_followup')
+        if not followup:
+            return
+        followup['disable_skill_prompt'] = True
+        followup['skip_first_skill_msg'] = True
 
     def _kickoff_last_word_prompt(self):
         if self.day_state.get('phase') != 'last_words':
