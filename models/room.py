@@ -121,24 +121,20 @@ class Room:
         for user in self.players.values():
             user.skill['acted_this_stage'] = False
         self.broadcast_msg('狼人请出现', tts=True)
-        await asyncio.sleep(1)
         
         # 发送狼队成员信息给所有狼人
         wolf_players = [u for u in self.players.values() if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE]
         if wolf_players:
-            wolf_info_parts = []
-            for wolf in wolf_players:
-                if wolf.role == Role.WOLF_KING:
-                    wolf_info_parts.append(f"{wolf.seat}号(狼王)")
-                else:
-                    wolf_info_parts.append(f"{wolf.seat}号")
-            
-            wolf_info = "狼人玩家是：" + "、".join(wolf_info_parts)
-            
+            labels = [self._format_label(u.nick) for u in wolf_players]
+            wolf_info = "狼人玩家是：" + "、".join(labels)
+            wolf_king = next((u for u in wolf_players if u.role == Role.WOLF_KING), None)
+            if wolf_king:
+                wolf_info += f"，狼王是：{self._format_label(wolf_king.nick)}"
+
             # 发送给所有狼人
             for u in wolf_players:
                 self.send_msg(wolf_info, nick=u.nick)
-        
+
         await asyncio.sleep(2)
         
         self.waiting = True
@@ -198,6 +194,7 @@ class Room:
             (GameStage.WITCH, [Role.WITCH]),
             (GameStage.GUARD, [Role.GUARD]),
             (GameStage.HUNTER, [Role.HUNTER]),
+            (GameStage.WOLF_KING, [Role.WOLF_KING]),
             (GameStage.DREAMER, [Role.DREAMER]),
         ]
 
@@ -1081,7 +1078,8 @@ class Room:
                 player.skill['last_words_done'] = False
                 player.skill['pending_last_skill'] = False
             else:
-                player.skill['last_words_skill_resolved'] = False
+                supports_skill = self._player_supports_last_skill(player)
+                player.skill['last_words_skill_resolved'] = not supports_skill
                 player.skill['last_words_done'] = False
                 player.skill['pending_last_skill'] = False
         if disable_skill_prompt:
@@ -1089,10 +1087,7 @@ class Room:
         else:
             self.day_state['last_word_skill_announced'] = skip_first_skill_msg
         self.day_state['last_word_speech_announced'] = False
-        if disable_skill_prompt:
-            self._prompt_current_last_word_speech()
-        elif not skip_first_skill_msg:
-            self._announce_last_word_skill()
+        self._kickoff_last_word_prompt()
 
     def handle_last_word_skill_choice(self, user: User, choice: str):
         if self.day_state.get('phase') != 'last_words':
@@ -1128,21 +1123,19 @@ class Room:
             self.day_state['current_last_word'] = queue[0]
             self.day_state['last_word_speech_announced'] = False
             skip_skill_prompt = self.day_state.get('last_words_skip_skill_prompt', False)
-            if skip_skill_prompt:
-                self.day_state['last_word_skill_announced'] = True
-                self._prompt_current_last_word_speech()
-            else:
-                self.day_state['last_word_skill_announced'] = False
-                self._announce_last_word_skill()
             player = self.players.get(queue[0])
             if player:
                 if skip_skill_prompt:
                     player.skill['last_words_skill_resolved'] = True
                 else:
-                    player.skill['last_words_skill_resolved'] = False
+                    supports_skill = self._player_supports_last_skill(player)
+                    player.skill['last_words_skill_resolved'] = not supports_skill
                 player.skill['last_words_done'] = False
                 player.skill['pending_last_skill'] = False
+            self.day_state['last_word_skill_announced'] = skip_skill_prompt
+            self._kickoff_last_word_prompt()
         else:
+            self._schedule_victory_check()
             next_stage = self.day_state.get('after_last_words')
             if next_stage == 'exile_speech':
                 self.prompt_sheriff_order()
@@ -1170,6 +1163,63 @@ class Room:
         if not self.day_state.get('last_word_speech_announced', False):
             self.broadcast_msg(f'请{self._format_label(current)}发表遗言')
             self.day_state['last_word_speech_announced'] = True
+            self.day_state['last_word_skill_announced'] = True
+
+    def _player_supports_last_skill(self, player: Optional[User]) -> bool:
+        if not player or not player.role_instance:
+            return False
+        supports = getattr(player.role_instance, 'supports_last_skill', None)
+        if supports is None:
+            return False
+        return bool(supports())
+
+    def _kickoff_last_word_prompt(self):
+        if self.day_state.get('phase') != 'last_words':
+            return
+        current = self.day_state.get('current_last_word')
+        if not current:
+            return
+        player = self.players.get(current)
+        if not player:
+            return
+        allow_speech = self.day_state.get('last_words_allow_speech', True)
+        skip_skill_prompt = self.day_state.get('last_words_skip_skill_prompt', False)
+
+        if skip_skill_prompt:
+            self.day_state['last_word_skill_announced'] = True
+            if allow_speech:
+                if not self.day_state.get('last_word_speech_announced', False):
+                    self._prompt_current_last_word_speech()
+            else:
+                player.skill['last_words_done'] = True
+                self._advance_last_words_if_ready(player)
+            return
+
+        if not self._player_supports_last_skill(player):
+            player.skill['last_words_skill_resolved'] = True
+            player.skill['pending_last_skill'] = False
+
+        if player.skill.get('last_words_skill_resolved', False):
+            self.day_state['last_word_skill_announced'] = True
+            if allow_speech:
+                if not player.skill.get('last_words_done', False):
+                    self._prompt_current_last_word_speech()
+            else:
+                player.skill['last_words_done'] = True
+                self._advance_last_words_if_ready(player)
+            return
+
+        if not self.day_state.get('last_word_skill_announced', False):
+            self._announce_last_word_skill()
+
+    def _schedule_victory_check(self):
+        if self.game_over:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self.check_game_end())
 
     def prompt_sheriff_order(self):
         pending = self.skill.get('pending_day_bombs')
@@ -1667,6 +1717,7 @@ class Room:
                 if player:
                     player.status = PlayerStatus.DEAD
         self.end_day_phase()
+        self._schedule_victory_check()
 
     def _handle_idiot_flip(self, player: User):
         player.skill['idiot_flipped'] = True
