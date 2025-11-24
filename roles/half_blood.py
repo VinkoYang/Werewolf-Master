@@ -79,7 +79,7 @@ class HalfBlood(RoleBase):
             self.user.skill['acted_this_stage'] = True
             self.user.send_msg('系统未能为你指定血亲，系统将按默认规则处理。')
             return True
-        camp = 'wolf' if target.role in (Role.WOLF, Role.WOLF_KING) else 'good'
+        camp = 'wolf' if target.role in (Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING) else 'good'
         self.user.skill['half_blood_camp'] = camp
         self.user.skill['half_blood_target'] = target.nick
         self.user.skill['half_blood_completed'] = True

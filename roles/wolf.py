@@ -5,6 +5,8 @@ from utils import add_cancel_button
 from .base import RoleBase, player_action
 from enums import GameStage, PlayerStatus, Role
 
+WOLF_ROLES = (Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING)
+
 class Wolf(RoleBase):
     name = '狼人'
     team = '狼人阵营'
@@ -102,10 +104,11 @@ class Wolf(RoleBase):
         # 如果玩家选择了"放弃"或没有选择
         if not target_nick:
             # 标记为已行动（放弃）
+            self.user.send_msg('你今夜放弃选择击杀目标')
             self.user.skill['acted_this_stage'] = True
             # 广播给所有狼人：某玩家选择放弃
             for u in room.players.values():
-                if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE:
+                if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE:
                     room.send_msg(f"{self.user.seat}号玩家选择放弃", nick=u.nick)
             # 检查是否所有狼人都已行动
             self._check_all_wolves_acted()
@@ -125,7 +128,7 @@ class Wolf(RoleBase):
         target_user = room.players.get(target_nick)
         target_seat = target_user.seat if target_user else '?'
         for u in room.players.values():
-            if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE:
+            if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE:
                 room.send_msg(f"{self.user.seat}号玩家选择击杀{target_seat}号玩家", nick=u.nick)
         
         # 检查是否所有狼人都已行动
@@ -134,6 +137,7 @@ class Wolf(RoleBase):
 
     def _abstain(self):
         room = self.user.room
+        self.user.send_msg('你今夜放弃选择击杀目标')
         votes_map = room.skill.get('wolf_votes')
         if votes_map:
             for target, voters in list(votes_map.items()):
@@ -153,7 +157,7 @@ class Wolf(RoleBase):
         else:
             wolves = [
                 u for u in room.players.values()
-                if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE
+                if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE
             ]
         all_acted = all(u.skill.get('acted_this_stage', False) for u in wolves)
         if all_acted:
