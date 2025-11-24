@@ -47,6 +47,7 @@ class GameStage(Enum):
 class Role(PlainEnum):
     WOLF = '狼人'
     WOLF_KING = '狼王'
+    WHITE_WOLF_KING = '白狼王'
     SEER = '预言家'
     WITCH = '女巫'
     GUARD = '守卫'
@@ -83,7 +84,8 @@ class Role(PlainEnum):
     @classmethod
     def god_wolf_mapping(cls) -> dict:
         return {
-            '狼王': cls.WOLF_KING
+            '狼王': cls.WOLF_KING,
+            '白狼王': cls.WHITE_WOLF_KING,
         }
 
     @classmethod

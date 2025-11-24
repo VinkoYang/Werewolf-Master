@@ -76,7 +76,7 @@ class Seer(RoleBase):
         # 判断目标阵营：狼人或好人
         if target.role == Role.HALF_BLOOD:
             camp = '好人'
-        elif target.role in (Role.WOLF, Role.WOLF_KING):
+        elif target.role in (Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING):
             camp = '狼人'
         else:
             camp = '好人'

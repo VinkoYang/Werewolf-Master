@@ -26,11 +26,13 @@ from roles.hunter import Hunter
 from roles.dreamer import Dreamer
 from roles.idiot import Idiot
 from roles.half_blood import HalfBlood
+from roles.white_wolf_king import WhiteWolfKing
 
 role_classes = {
     Role.CITIZEN: Citizen,
     Role.WOLF: Wolf,
     Role.WOLF_KING: WolfKing,
+    Role.WHITE_WOLF_KING: WhiteWolfKing,
     Role.SEER: Seer,
     Role.WITCH: Witch,
     Role.GUARD: Guard,
@@ -39,6 +41,8 @@ role_classes = {
     Role.IDIOT: Idiot,
     Role.HALF_BLOOD: HalfBlood,
 }
+
+WOLF_TEAM_ROLES = {Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING}
 
 @dataclass
 class Room:
@@ -151,6 +155,9 @@ class Room:
             wolf_king = next((u for u in wolf_players if u.role == Role.WOLF_KING), None)
             if wolf_king:
                 wolf_info += f"，狼王是：{self._format_label(wolf_king.nick)}"
+            white_king = next((u for u in wolf_players if u.role == Role.WHITE_WOLF_KING), None)
+            if white_king:
+                wolf_info += f"，白狼王是：{self._format_label(white_king.nick)}"
 
             for u in wolf_players:
                 self.send_msg(wolf_info, nick=u.nick)
@@ -191,7 +198,7 @@ class Room:
             # 发送击杀结果给所有狼人（包括未行动的狼人）
             target_seat = target.seat if target else '?'
             for u in self.players.values():
-                if u.role in (Role.WOLF, Role.WOLF_KING):
+                if u.role in WOLF_TEAM_ROLES:
                     self.send_msg(f"今夜，狼队选择{target_seat}号玩家被击杀。", nick=u.nick)
             
             # 清理投票记录
@@ -203,7 +210,7 @@ class Room:
         elif wolf_players:
             # d. 所有狼人都没有选择或点击了"放弃" -> 空刀
             for u in self.players.values():
-                if u.role in (Role.WOLF, Role.WOLF_KING):
+                if u.role in WOLF_TEAM_ROLES:
                     self.send_msg("今夜，狼队空刀。", nick=u.nick)
 
         # 延迟3秒后再显示"狼人请闭眼"
@@ -383,8 +390,8 @@ class Room:
 
     async def check_game_end(self):
         alive = self.list_alive_players()
-        wolves = [u for u in alive if u.role in (Role.WOLF, Role.WOLF_KING)]
-        goods = [u for u in alive if u.role not in (Role.WOLF, Role.WOLF_KING)]
+        wolves = [u for u in alive if u.role in WOLF_TEAM_ROLES]
+        goods = [u for u in alive if u.role not in WOLF_TEAM_ROLES]
         half_bloods = [u for u in goods if u.role == Role.HALF_BLOOD]
         for hb in half_bloods:
             if hb.skill.get('half_blood_camp', 'good') == 'wolf':
@@ -418,7 +425,7 @@ class Room:
     def get_active_wolves(self) -> List[User]:
         return [
             u for u in self.players.values()
-            if u.role in (Role.WOLF, Role.WOLF_KING) and u.status != PlayerStatus.DEAD
+            if u.role in WOLF_TEAM_ROLES and u.status != PlayerStatus.DEAD
         ]
 
     def is_full(self) -> bool:
@@ -530,7 +537,7 @@ class Room:
     def can_wolf_self_bomb(self, user: User) -> bool:
         if not user or user.status != PlayerStatus.ALIVE:
             return False
-        if user.role not in (Role.WOLF, Role.WOLF_KING):
+        if user.role not in WOLF_TEAM_ROLES:
             return False
         if self.stage == GameStage.SPEECH:
             state = self.sheriff_state or {}
@@ -675,16 +682,29 @@ class Room:
         if not self.can_wolf_self_bomb(user):
             return '当前不可自曝'
 
+        bonus_target = None
+        if user.role == Role.WHITE_WOLF_KING:
+            validation = self._prepare_white_wolf_bomb(user)
+            if isinstance(validation, str):
+                return validation
+            bonus_target = validation
+
         if self.stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
+            if user.role == Role.WHITE_WOLF_KING:
+                self._execute_white_wolf_bomb(user, bonus_target)
             self._handle_exile_stage_bomb(user)
             return None
 
         state = self.sheriff_state or {}
         if self.stage == GameStage.SPEECH:
             self._handle_sheriff_stage_bomb(user, deferred=False)
+            if user.role == Role.WHITE_WOLF_KING:
+                self._execute_white_wolf_bomb(user, bonus_target)
             return None
         if self.stage == GameStage.SHERIFF and state.get('phase') == 'deferred_withdraw':
             self._handle_sheriff_stage_bomb(user, deferred=True)
+            if user.role == Role.WHITE_WOLF_KING:
+                self._execute_white_wolf_bomb(user, bonus_target)
             return None
         return '当前不可自曝'
 
@@ -699,7 +719,18 @@ class Room:
         queue.clear()
         day_state['phase'] = 'bomb_execution'
         self.current_speaker = None
-        self._start_bomb_last_words(user.nick)
+        is_white_king = user.role == Role.WHITE_WOLF_KING
+        include_bomber = not is_white_king
+        allow_followup_speech = False
+        after_stage = 'end_day'
+        self._start_bomb_last_words(
+            user.nick,
+            after_stage=after_stage,
+            include_bomber=include_bomber,
+            allow_followup_speech=allow_followup_speech,
+            suppress_skill_prompt=not is_white_king,
+            use_badge_followup=not is_white_king
+        )
 
     def _handle_sheriff_stage_bomb(self, user: User, deferred: bool):
         state = self.sheriff_state or {}
@@ -748,11 +779,91 @@ class Room:
         state['phase'] = 'done'
         self.finish_sheriff_phase(None)
 
+    def _prepare_white_wolf_bomb(self, user: User):
+        others = [
+            u for u in self.list_alive_players()
+            if u.role in WOLF_TEAM_ROLES and u.nick != user.nick
+        ]
+        if not others:
+            return '白狼王已是最后一名狼人，无法自曝。'
+        target_nick = user.skill.get('white_wolf_bomb_target')
+        if not target_nick:
+            return '白狼王需要先选择要击杀的玩家。'
+        target = self.players.get(target_nick)
+        if not target or target.status != PlayerStatus.ALIVE or target.nick == user.nick:
+            return '击杀目标无效，请重新选择。'
+        return target
+
+    def _execute_white_wolf_bomb(self, user: User, target: Optional[User]):
+        if not target:
+            return
+        if target.status != PlayerStatus.ALIVE:
+            user.send_msg('目标已不在场，额外击杀失效。')
+            user.skill.pop('white_wolf_bomb_target', None)
+            return
+        self.broadcast_msg(f"{self._format_label(user.nick)}自曝，强制带走{self._format_label(target.nick)}。")
+        self._enqueue_white_wolf_kill(target)
+        user.skill.pop('white_wolf_bomb_target', None)
+
     def _queue_pending_day_bomb(self, nick: str, origin: str):
         queue = self.skill.setdefault('pending_day_bombs', [])
         queue.append({'nick': nick, 'origin': origin})
 
-    def _start_bomb_last_words(self, nick: str):
+    def _trigger_pending_day_bomb_flow(self) -> bool:
+        pending = self.skill.get('pending_day_bombs')
+        if not pending:
+            if pending == []:
+                self.skill.pop('pending_day_bombs', None)
+            return False
+        while pending:
+            entry = pending.pop(0)
+            bomber = self.players.get(entry.get('nick')) if entry else None
+            if not bomber:
+                continue
+            is_white_king = bomber.role == Role.WHITE_WOLF_KING
+            if not is_white_king:
+                self.broadcast_msg('由于狼人自曝，今日直接进入遗言阶段。')
+            self.day_state['phase'] = 'last_words'
+            include_bomber = not is_white_king
+            allow_follow = False
+            suppress_prompt = not is_white_king
+            self._start_bomb_last_words(
+                bomber.nick,
+                after_stage='announcement',
+                include_bomber=include_bomber,
+                allow_followup_speech=allow_follow,
+                suppress_skill_prompt=suppress_prompt,
+                use_badge_followup=not is_white_king
+            )
+            if not pending:
+                self.skill.pop('pending_day_bombs', None)
+            return True
+        self.skill.pop('pending_day_bombs', None)
+        return False
+
+    def _enqueue_white_wolf_kill(self, target: Optional[User]):
+        if not target or target.status == PlayerStatus.DEAD:
+            return
+        if self.stage == GameStage.LAST_WORDS and (self.day_state or {}).get('phase') == 'last_words':
+            self.handle_last_word_skill_kill(target.nick, from_day_execution=True)
+            return
+        target.status = PlayerStatus.PENDING_DEAD
+        day_deaths = self.day_state.setdefault('day_deaths', [])
+        if target.nick not in day_deaths:
+            day_deaths.append(target.nick)
+        pending = self.skill.setdefault('white_wolf_pending_kills', [])
+        if target.nick not in pending:
+            pending.append(target.nick)
+
+    def _start_bomb_last_words(
+        self,
+        nick: str,
+        after_stage: str = 'end_day',
+        include_bomber: bool = True,
+        allow_followup_speech: bool = False,
+        suppress_skill_prompt: bool = True,
+        use_badge_followup: bool = True
+    ):
         player = self.players.get(nick)
         if not player:
             return
@@ -761,20 +872,32 @@ class Room:
         day_deaths = self.day_state.setdefault('day_deaths', [])
         if nick not in day_deaths:
             day_deaths.append(nick)
-        queue = [nick]
-        self._set_badge_followup(
-            queue=queue,
-            allow_speech=True,
-            after_stage='end_day',
-            randomize=False,
-            skip_first_skill_msg=True,
-            disable_skill_prompt=True
-        )
+        queue = []
+        if include_bomber:
+            queue.append(nick)
+        extras = self.skill.pop('white_wolf_pending_kills', [])
+        for extra in extras:
+            if extra in self.players and extra not in queue:
+                queue.append(extra)
+                if extra not in day_deaths:
+                    day_deaths.append(extra)
+        if not queue:
+            self._resolve_post_death_after_stage(after_stage)
+            return
+        if use_badge_followup:
+            self._set_badge_followup(
+                queue=queue,
+                allow_speech=allow_followup_speech,
+                after_stage=after_stage,
+                randomize=False,
+                skip_first_skill_msg=suppress_skill_prompt,
+                disable_skill_prompt=suppress_skill_prompt
+            )
         self.start_last_words(
             queue,
-            allow_speech=False,
-            after_stage='badge_transfer',
-            disable_skill_prompt=False
+            allow_speech=allow_followup_speech,
+            after_stage='badge_transfer' if use_badge_followup else after_stage,
+            disable_skill_prompt=suppress_skill_prompt
         )
 
     def _check_auto_elect(self):
@@ -1073,9 +1196,17 @@ class Room:
             'night_anchor': None,
             'sheriff_order_pending': False,
             'pending_badge_followup': None,
+            'pending_announcement_broadcast': False,
         }
-        if announce:
-            self.broadcast_msg('请房主公布昨夜信息')
+        has_pending_day_bombs = bool(self.skill.get('pending_day_bombs'))
+        if has_pending_day_bombs and announce:
+            self.day_state['pending_announcement_broadcast'] = True
+        else:
+            self.day_state['pending_announcement_broadcast'] = False
+            if announce:
+                self.broadcast_msg('请房主公布昨夜信息')
+        if has_pending_day_bombs:
+            self._trigger_pending_day_bomb_flow()
 
     async def publish_night_info(self) -> Optional[str]:
         state = self.day_state or {}
@@ -1304,19 +1435,8 @@ class Room:
         loop.create_task(self.check_game_end())
 
     def prompt_sheriff_order(self):
-        pending = self.skill.get('pending_day_bombs')
-        while pending:
-            entry = pending.pop(0)
-            bomber = self.players.get(entry.get('nick'))
-            if bomber:
-                self.broadcast_msg('由于狼人自曝，今日直接进入遗言阶段。')
-                self.day_state['phase'] = 'last_words'
-                self._start_bomb_last_words(bomber.nick)
-                if not pending:
-                    self.skill.pop('pending_day_bombs', None)
-                return
-        if pending == []:
-            self.skill.pop('pending_day_bombs', None)
+        if self._trigger_pending_day_bomb_flow():
+            return
 
         captain = self.skill.get('sheriff_captain')
         captain_alive = captain and self._is_alive(captain)
@@ -1831,6 +1951,16 @@ class Room:
             self.prompt_sheriff_order()
         elif after_stage == 'end_day':
             self._finalize_day_execution()
+        elif after_stage == 'announcement':
+            self._resume_day_announcement()
+
+    def _resume_day_announcement(self):
+        if self._trigger_pending_day_bomb_flow():
+            return
+        self.stage = GameStage.Day
+        self.day_state['phase'] = 'announcement'
+        if self.day_state.pop('pending_announcement_broadcast', False):
+            self.broadcast_msg('请房主公布昨夜信息')
 
     def _finalize_day_execution(self):
         day_deaths = self.day_state.get('day_deaths')
