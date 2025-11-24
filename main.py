@@ -62,6 +62,7 @@ def get_global_countdown_context(room: Optional[Room]) -> Tuple[Optional[str], O
 
     stage = room.stage
     night_labels = {
+        GameStage.HALF_BLOOD: '混血儿认亲',
         GameStage.WOLF: '狼人行动',
         GameStage.SEER: '预言家查验',
         GameStage.WITCH: '女巫操作',
@@ -611,7 +612,7 @@ async def main():
             continue
 
         if ops:
-            NIGHT_STAGES = {GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER}
+            NIGHT_STAGES = {GameStage.HALF_BLOOD, GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER}
             # 夜间操作显示 20s 倒计时与确认键
             if room.stage is not None:
                 # 仅在有玩家操作时（夜晚阶段）追加确认键
@@ -686,7 +687,7 @@ async def main():
                             if getattr(user.room, 'current_speaker', None) == user.nick:
                                 user.room.advance_exile_speech()
                         else:
-                            pending_keys = ['wolf_choice', 'pending_protect', 'pending_dream_target', 'pending_target']
+                            pending_keys = ['wolf_choice', 'pending_protect', 'pending_dream_target', 'pending_target', 'pending_half_blood_target']
                             has_pending = any(user.skill.get(k) for k in pending_keys)
 
                             if user.role_instance and user.role_instance.needs_global_confirm and hasattr(user.role_instance, 'confirm'):
