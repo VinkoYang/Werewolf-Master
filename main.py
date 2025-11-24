@@ -482,7 +482,21 @@ async def main():
                 if (not current_user.skill.get('last_words_skill_resolved', False)) and not current_user.skill.get('pending_last_skill', False):
                     buttons = ['放弃']
                     if supports_skill:
-                        buttons = ['发动技能', '放弃']
+                        can_trigger_skill = True
+                        if current_user.role in (Role.HUNTER, Role.WOLF_KING) and not current_user.skill.get('can_shoot', True):
+                            can_trigger_skill = False
+                        if can_trigger_skill:
+                            buttons = ['发动技能', '放弃']
+                        else:
+                            buttons = [
+                                {
+                                    'label': '发动技能（不可用）',
+                                    'value': 'disabled_last_skill',
+                                    'disabled': True,
+                                    'color': 'secondary'
+                                },
+                                '放弃'
+                            ]
                     user_ops += [
                         actions(
                             name='last_word_skill',

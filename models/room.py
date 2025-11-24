@@ -194,10 +194,10 @@ class Room:
         night_roles = [
             (GameStage.SEER, [Role.SEER]),
             (GameStage.WITCH, [Role.WITCH]),
+            (GameStage.DREAMER, [Role.DREAMER]),
             (GameStage.GUARD, [Role.GUARD]),
             (GameStage.HUNTER, [Role.HUNTER]),
             (GameStage.WOLF_KING, [Role.WOLF_KING]),
-            (GameStage.DREAMER, [Role.DREAMER]),
         ]
 
         for stage, role_list in night_roles:
@@ -241,6 +241,16 @@ class Room:
                 continue
             immunity = u.skill.get('dream_immunity', False)
             u.skill['dream_immunity'] = False
+            dream_cause = u.skill.pop('dream_forced_death', None)
+
+            if dream_cause:
+                u.status = PlayerStatus.DEAD
+                dead_this_night.append(u.nick)
+                if u.role in (Role.HUNTER, Role.WOLF_KING):
+                    u.skill['can_shoot'] = False
+                    u.send_msg('你无法开枪。')
+                u.skill.pop('dreamer_nick', None)
+                continue
 
             if u.status == PlayerStatus.PENDING_POISON:
                 if not immunity:
@@ -262,6 +272,20 @@ class Room:
                 u.status = PlayerStatus.ALIVE
             else:
                 u.status = PlayerStatus.ALIVE
+
+        dreamers = [user for user in self.players.values() if user.role == Role.DREAMER]
+        if dreamers:
+            for dreamer_player in dreamers:
+                for candidate in self.players.values():
+                    if candidate.skill.get('dreamer_nick') != dreamer_player.nick:
+                        continue
+                    if dreamer_player.status == PlayerStatus.DEAD and candidate.status != PlayerStatus.DEAD:
+                        candidate.status = PlayerStatus.DEAD
+                        dead_this_night.append(candidate.nick)
+                        if candidate.role in (Role.HUNTER, Role.WOLF_KING):
+                            candidate.skill['can_shoot'] = False
+                            candidate.send_msg('你无法开枪。')
+                    candidate.skill.pop('dreamer_nick', None)
 
         self.death_pending = dead_this_night
         self.broadcast_msg('天亮请睁眼', tts=True)
@@ -1095,6 +1119,9 @@ class Room:
         if user.nick != self.day_state.get('current_last_word'):
             return
         if choice == '发动技能':
+            if user.role in (Role.HUNTER, Role.WOLF_KING) and not user.skill.get('can_shoot', True):
+                user.send_msg('你无法发动技能，请选择放弃。')
+                return
             user.skill['pending_last_skill'] = True
         else:
             user.skill['pending_last_skill'] = False

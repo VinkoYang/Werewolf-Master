@@ -551,3 +551,10 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 1. Updated room.py so idiot sheriffs now broadcast the generic “请移交警徽”, flipped idiots stay alive, still deliver last words, and lose future voting rights without blocking the day flow. Added a badge-transfer window controller: the phase now always lasts 10 seconds (with a visible countdown) before continuing to the next stage, even if the decision is made immediately or times out automatically.
 2. Added wolf self-bomb flexibility (already addressed earlier) and ensured the white-idiot flow integrates cleanly with last-words and badge follow-ups.
 3. Fixed the seer’s “放弃” button in seer.py; it now works as a regular action, ends the night turn, and sends the required private message (“今夜，你放弃查验。”).
+
+## 2025-11-24 更新补丁3（摄梦人与夜间 UI 修复）
+- roles/guard.py：将“放弃”按钮改为普通选项并直接走 skip 逻辑，确保守卫操作窗口不会被 PyWebIO 的 cancel 事件提前关闭，倒计时结束也能正确落盘。
+- roles/dreamer.py：摄梦人面板现在列出所有玩家（自己与死亡目标为灰色不可点），选中后立刻收到“今夜，你选择让 X 号 Y 梦游”的私聊提示；新增 apply_logic 流水，自动处理梦游免疫、连续两晚指定的梦境吞噬，以及摄梦人出局时的连死判定。
+- models/room.py：夜间阶段顺序调整为“女巫 → 摄梦人 → 守卫”，并在结算时统一取消 dream_immunity、dream_forced_death 与 dreamer_nick；若猎人/狼王因梦境死亡或连死，会立即失去开枪资格并收到“你无法开枪。”的私聊，同时遗言阶段的“发动技能”按钮默认置灰。
+- main.py：遗言操作面板会根据 can_shoot 状态禁用“发动技能”按钮，并阻止猎人或狼王在枪被锁定时进入技能模式，提示玩家只能“放弃”。
+- roles.md：在摄梦人条目中补充“不能对自己发动技能”的说明，使规则文档与最新客户端行为一致。
