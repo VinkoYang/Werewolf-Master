@@ -6,6 +6,8 @@ import signal
 import re
 import json
 import html
+from collections import Counter
+from copy import deepcopy
 from typing import Optional, Tuple
 from logging import getLogger, basicConfig
 
@@ -14,12 +16,14 @@ from pywebio.platform.tornado import ioloop as get_pywebio_ioloop
 from pywebio.input import *
 from pywebio.output import *
 from pywebio.output import use_scope
+from pywebio.pin import put_input, pin_on_change, pin_update
 from pywebio.session import defer_call, get_current_task_id, get_current_session, set_env
 
 
 from enums import WitchRule, GuardRule, SheriffBombRule, Role, GameStage, PlayerStatus
 from models.room import Room
 from models.user import User
+from models.system import Global
 from utils import add_cancel_button, get_interface_ip
 
 # ==================== 接入外网：pyngrok ====================
@@ -31,6 +35,248 @@ basicConfig(stream=sys.stdout,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = getLogger('Wolf')
 logger.setLevel('DEBUG')
+
+DEFAULT_ROOM_RULES = {
+    'witch_rule': WitchRule.SELF_RESCUE_FIRST_NIGHT_ONLY.value,
+    'guard_rule': GuardRule.MED_CONFLICT.value,
+    'sheriff_bomb_rule': SheriffBombRule.DOUBLE_LOSS.value,
+}
+
+PRESET_CUSTOM = 'preset_custom'
+PRESET_STANDARD_12 = 'preset_standard_12'
+PRESET_DEV_3 = 'preset_dev_3'
+PRESET_DEV_6 = 'preset_dev_6'
+PRESET_DEV_7 = 'preset_dev_7'
+
+ROOM_PRESET_CONFIGS = {
+    PRESET_STANDARD_12: {
+        **DEFAULT_ROOM_RULES,
+        'wolf_num': 4,
+        'god_wolf': [],
+        'citizen_num': 4,
+        'god_citizen': ['预言家', '女巫', '猎人', '白痴'],
+    },
+    PRESET_DEV_3: {
+        **DEFAULT_ROOM_RULES,
+        'wolf_num': 1,
+        'god_wolf': [],
+        'citizen_num': 1,
+        'god_citizen': ['预言家'],
+    },
+    PRESET_DEV_6: {
+        **DEFAULT_ROOM_RULES,
+        'wolf_num': 1,
+        'god_wolf': [],
+        'citizen_num': 1,
+        'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
+    },
+    PRESET_DEV_7: {
+        **DEFAULT_ROOM_RULES,
+        'wolf_num': 2,
+        'god_wolf': [],
+        'citizen_num': 1,
+        'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
+    },
+}
+
+ROOM_CREATION_SECTIONS = [
+    ('自定义', [
+        {'label': '手动配置', 'value': PRESET_CUSTOM, 'color': 'primary'},
+    ]),
+    ('12人版型', [
+        {'label': '12人标准局：预女猎白', 'value': PRESET_STANDARD_12, 'color': 'success'},
+    ]),
+    ('开发者测试版型', [
+        {'label': '3人测试板子', 'value': PRESET_DEV_3},
+        {'label': '预女猎守1狼6人测试', 'value': PRESET_DEV_6},
+        {'label': '预女猎守2狼7人测试', 'value': PRESET_DEV_7},
+    ]),
+]
+
+
+def _format_role_config_summary(roles):
+    counter = Counter(roles)
+    if not counter:
+        return '暂未配置角色'
+    parts = []
+    for role, count in sorted(counter.items(), key=lambda item: item[0].value):
+        label = role.value
+        parts.append(f"{label}x{count}" if count > 1 else label)
+    return '、'.join(parts)
+
+
+def build_room_info_lines() -> list:
+    rooms = list(Global.rooms.values())
+    if not rooms:
+        return []
+    lines = []
+    for room in sorted(rooms, key=lambda r: r.id or 0):
+        current = len(room.players)
+        total = len(room.roles)
+        config = _format_role_config_summary(room.roles)
+        lines.append({
+            'room_id': str(room.id),
+            'text': f"{room.id}号：{current}/{total} 人｜{config}"
+        })
+    return lines
+
+
+def update_room_info_panel(scope_name: str, on_select=None):
+    lines = build_room_info_lines()
+    entries = []
+    if not lines:
+        entries.append(put_text('暂无可加入的房间，请先创建一个房间。'))
+    else:
+        for entry in lines:
+            if on_select:
+                entries.append(
+                    put_button(
+                        entry['text'],
+                        onclick=lambda rid=entry['room_id']: on_select(rid),
+                        color='light'
+                    )
+                )
+            else:
+                entries.append(put_text(entry['text']))
+    entries.append(put_button('刷新', onclick=lambda: update_room_info_panel(scope_name, on_select), color='info'))
+    with use_scope(scope_name, clear=True):
+        put_column(entries)
+
+
+async def prompt_room_join(current_user: User) -> Optional[str]:
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+
+    pin_name = make_scope_name('room_join_id', current_user.nick)
+    scope_name = make_scope_name('room_info_panel', current_user.nick)
+    room_selection = {'room_id': ''}
+
+    def _on_room_input(value):
+        room_selection['room_id'] = (value or '').strip()
+
+    def _submit_join():
+        value = room_selection['room_id']
+        error = Room.validate_room_join(value)
+        if error:
+            toast(error, color='error')
+            return
+        if future.done():
+            return
+        close_popup()
+        future.set_result(value)
+
+    def _cancel():
+        if future.done():
+            return
+        close_popup()
+        future.set_result(None)
+
+    def _quick_join(room_id: str):
+        room_selection['room_id'] = room_id
+        try:
+            pin_update(pin_name, value=room_id)
+        except Exception:
+            pass
+        _submit_join()
+
+    header = put_row([
+        put_text('加入房间'),
+        put_button('✕', onclick=_cancel, color='danger', outline=True)
+    ], size='90% 10%')
+
+    content = put_column([
+        header,
+        put_row([
+            put_input(pin_name, type='text', placeholder='输入房间号', value=''),
+            put_button('加入房间', onclick=_submit_join, color='success')
+        ], size='70% 30%'),
+        put_markdown('#### 房间信息'),
+        put_scope(scope_name)
+    ])
+
+    popup('加入房间', content, closable=False)
+    pin_on_change(pin_name, _on_room_input)
+    _on_room_input('')
+    update_room_info_panel(scope_name, on_select=_quick_join)
+    result = await future
+    return result
+
+
+async def select_room_creation_preset() -> Optional[str]:
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+
+    def _resolve(value):
+        if future.done():
+            return
+        future.set_result(value)
+        close_popup()
+
+    def _cancel():
+        if future.done():
+            return
+        future.set_result(None)
+        close_popup()
+
+    section_blocks = []
+    for title, buttons in ROOM_CREATION_SECTIONS:
+        section_blocks.append(put_markdown(f"### {title}"))
+        section_blocks.append(put_buttons(buttons, onclick=_resolve))
+
+    header = put_row([
+        put_text('创建房间'),
+        put_button('✕', onclick=_cancel, color='danger', outline=True)
+    ], size='90% 10%')
+
+    popup('创建房间', put_column([header, put_column(section_blocks)]), closable=False)
+    choice = await future
+    return choice
+
+
+async def prompt_room_creation() -> Optional[dict]:
+    preset_choice = await select_room_creation_preset()
+    if not preset_choice:
+        return None
+    if preset_choice == PRESET_CUSTOM:
+        room_config = await input_group('房间设置', inputs=[
+            input(name='wolf_num', label='普通狼数', type=NUMBER, value='3'),
+            checkbox(name='god_wolf', label='特殊狼', inline=True, options=Role.as_god_wolf_options()),
+            input(name='citizen_num', label='普通村民数', type=NUMBER, value='4'),
+            checkbox(name='god_citizen', label='特殊村民', inline=True,
+                     options=Role.as_god_citizen_options()),
+            select(name='witch_rule', label='女巫解药规则', options=WitchRule.as_options()),
+            select(name='guard_rule', label='守卫规则', options=GuardRule.as_options()),
+            select(name='sheriff_bomb_rule', label='自曝警徽规则', options=SheriffBombRule.as_options(), value=SheriffBombRule.DOUBLE_LOSS.value),
+        ], cancelable=True)
+        if not room_config:
+            return None
+        return room_config
+    template = ROOM_PRESET_CONFIGS.get(preset_choice)
+    if not template:
+        raise ValueError(f'未知的房间预设：{preset_choice}')
+    return deepcopy(template)
+
+
+async def wait_lobby_selection(scope_name: str) -> str:
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+
+    def _on_click(value):
+        if future.done():
+            return
+        future.set_result(value)
+
+    with use_scope(scope_name, clear=True):
+        put_markdown('## 大厅')
+        put_buttons(
+            [
+                {'label': '创建房间', 'value': '创建房间', 'color': 'success'},
+                {'label': '加入房间', 'value': '加入房间', 'color': 'primary'}
+            ],
+            onclick=_on_click
+        )
+
+    return await future
 
 
 def make_scope_name(prefix: str, nick: str) -> str:
@@ -209,8 +455,8 @@ def build_js_countdown_html(label: str, seconds: int, key: str) -> str:
 
 
 async def main():
-    set_env(title="Moon Verdict 狼人杀法官助手")
-    put_markdown("## 狼人杀法官")
+    set_env(title="-Moon Verdict 月光审判- 狼人杀法官助手")
+    put_markdown("## -Moon Verdict 月光审判- 狼人杀AI法官")
     current_user = User.alloc(
         await input('请输入你的昵称',
                     required=True,
@@ -231,68 +477,30 @@ async def main():
         current_user.skill.pop('global_display_idle', None)
 
     put_text(f'你好，{current_user.nick}')
-    data = await input_group(
-        '大厅', inputs=[actions(name='cmd', buttons=['创建房间', '加入房间'])]
-    )
+    lobby_scope = make_scope_name('lobby_menu', current_user.nick)
+    room: Optional[Room] = None
+    while room is None:
+        cmd = await wait_lobby_selection(lobby_scope)
 
-    if data['cmd'] == '创建房间':
-        # 先显示板子预设选择
-        preset_data = await input_group('板子预设', inputs=[
-            actions(
-                name='preset',
-                buttons=['3人测试板子', '预女猎守1狼6人测试', '预女猎守2狼7人测试', '自定义配置'],
-                help_text='选择预设或自定义'
-            )
-        ])
-        
-        if preset_data['preset'] == '3人测试板子':
-            # 使用3人测试板子预设：1普通狼人，1平民，1预言家
-            room_config = {
-                'wolf_num': 1,
-                'god_wolf': [],
-                'citizen_num': 1,
-                'god_citizen': ['预言家'],
-                'witch_rule': '仅第一夜可自救',
-                'guard_rule': '同时被守被救时，对象死亡',
-                'sheriff_bomb_rule': '双爆吞警徽'
-            }
-        elif preset_data['preset'] == '预女猎守1狼6人测试':
-            room_config = {
-                'wolf_num': 1,
-                'god_wolf': [],
-                'citizen_num': 1,
-                'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
-                'witch_rule': '仅第一夜可自救',
-                'guard_rule': '同时被守被救时，对象死亡',
-                'sheriff_bomb_rule': '双爆吞警徽'
-            }
-        elif preset_data['preset'] == '预女猎守2狼7人测试':
-            room_config = {
-                'wolf_num': 2,
-                'god_wolf': [],
-                'citizen_num': 1,
-                'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
-                'witch_rule': '仅第一夜可自救',
-                'guard_rule': '同时被守被救时，对象死亡',
-                'sheriff_bomb_rule': '双爆吞警徽'
-            }
+        if cmd == '创建房间':
+            room_config = await prompt_room_creation()
+            if not room_config:
+                continue
+            room = Room.alloc(room_config)
+        elif cmd == '加入房间':
+            room_id = await prompt_room_join(current_user)
+            if not room_id:
+                continue
+            room = Room.get(room_id)
+            if not room:
+                toast('房间不存在或已关闭', color='warn')
+                room = None
+                continue
         else:
-            # 自定义配置
-            room_config = await input_group('房间设置', inputs=[
-                input(name='wolf_num', label='普通狼数', type=NUMBER, value='3'),
-                checkbox(name='god_wolf', label='特殊狼', inline=True, options=Role.as_god_wolf_options()),
-                input(name='citizen_num', label='普通村民数', type=NUMBER, value='4'),
-                checkbox(name='god_citizen', label='特殊村民', inline=True,
-                         options=Role.as_god_citizen_options()),
-                select(name='witch_rule', label='女巫解药规则', options=WitchRule.as_options()),
-                select(name='guard_rule', label='守卫规则', options=GuardRule.as_options()),
-                select(name='sheriff_bomb_rule', label='自曝警徽规则', options=SheriffBombRule.as_options(), value=SheriffBombRule.DOUBLE_LOSS.value),
-            ])
-        room = Room.alloc(room_config)
-    elif data['cmd'] == '加入房间':
-        room = Room.get(await input('房间号', type=TEXT, validate=Room.validate_room_join))
-    else:
-        raise NotImplementedError
+            continue
+
+    with use_scope(lobby_scope, clear=True):
+        pass
 
     # 增大消息显示区域高度，提供更充足的聊天/系统信息显示空间
     put_scrollable(current_user.game_msg, height=600, keep_bottom=True)
