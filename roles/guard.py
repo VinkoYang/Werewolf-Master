@@ -38,7 +38,7 @@ class Guard(RoleBase):
                 btn['color'] = 'warning'
             buttons.append(btn)
 
-        buttons.append({'label': '放弃', 'type': 'cancel'})
+        buttons.append({'label': '放弃', 'value': '放弃', 'color': 'secondary'})
         return [
             actions(
                 name='guard_team_op',
@@ -50,7 +50,7 @@ class Guard(RoleBase):
     @player_action
     def protect_player(self, nick: str) -> Optional[str]:
         if nick in ('取消', '放弃'):
-            return None
+            return self.skip()
         
         # 解析昵称：处理 "seat. nick" 格式
         target_nick = nick.split('.', 1)[-1].strip()

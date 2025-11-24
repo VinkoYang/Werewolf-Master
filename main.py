@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 from logging import getLogger, basicConfig
 
 from pywebio import start_server
+from pywebio.platform.tornado import ioloop as get_pywebio_ioloop
 from pywebio.input import *
 from pywebio.output import *
 from pywebio.output import use_scope
@@ -66,6 +67,7 @@ def get_global_countdown_context(room: Optional[Room]) -> Tuple[Optional[str], O
         GameStage.WITCH: '女巫操作',
         GameStage.GUARD: '守卫行动',
         GameStage.HUNTER: '猎人阶段',
+        GameStage.WOLF_KING: '狼王确认',
         GameStage.DREAMER: '摄梦人阶段',
     }
     if stage in night_labels:
@@ -480,7 +482,21 @@ async def main():
                 if (not current_user.skill.get('last_words_skill_resolved', False)) and not current_user.skill.get('pending_last_skill', False):
                     buttons = ['放弃']
                     if supports_skill:
-                        buttons = ['发动技能', '放弃']
+                        can_trigger_skill = True
+                        if current_user.role in (Role.HUNTER, Role.WOLF_KING) and not current_user.skill.get('can_shoot', True):
+                            can_trigger_skill = False
+                        if can_trigger_skill:
+                            buttons = ['发动技能', '放弃']
+                        else:
+                            buttons = [
+                                {
+                                    'label': '发动技能（不可用）',
+                                    'value': 'disabled_last_skill',
+                                    'disabled': True,
+                                    'color': 'secondary'
+                                },
+                                '放弃'
+                            ]
                     user_ops += [
                         actions(
                             name='last_word_skill',
@@ -595,7 +611,7 @@ async def main():
             continue
 
         if ops:
-            NIGHT_STAGES = {GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.DREAMER}
+            NIGHT_STAGES = {GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER}
             # 夜间操作显示 20s 倒计时与确认键
             if room.stage is not None:
                 # 仅在有玩家操作时（夜晚阶段）追加确认键
@@ -992,10 +1008,13 @@ if __name__ == '__main__':
 
     def stop_server(signum, frame):
         logger.info("正在关闭服务器...")
-        import tornado.ioloop
-        tornado.ioloop.IOLoop.current().add_callback(
-            tornado.ioloop.IOLoop.current().stop
-        )
+        loop = get_pywebio_ioloop()
+        if loop is None:
+            return
+        try:
+            loop.add_callback_from_signal(loop.stop)
+        except AttributeError:
+            loop.add_callback(loop.stop)
     signal.signal(signal.SIGINT, stop_server)
 
     # 默认端口，可通过环境变量 `PORT` 覆盖（方便在端口被占用时切换）

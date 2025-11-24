@@ -541,3 +541,20 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 - Updated the stage gating so GameStage.EXILE_SPEECH/EXILE_PK_SPEECH count as timed phases, and ensured last-word speech timers also run for 120 s on both the UI scope and the global display.
 - All speech phases now follow the requested timing: sheriff竞选和PK发言、放逐及放逐PK发言均注入 120 s 倒计时，白天放逐阶段若轮到警长则自动展示 150 s。get_global_countdown_context()、全局 JS 计时器和玩家私有 _countdown() 均统一使用这些时长，并在超时后自动推进相应发言队列（含警长与放逐发言）。
 - 页面标题体验更新：初次打开默认显示 Moon Verdict 狼人杀法官助手，输入昵称后切换为 Moon Verdict： 欢迎<昵称>加入游戏，进入房间后继续沿用现有的动态房间标题逻辑。
+
+## 2025-11-24 更新补丁1
+1. witch.py: “不使用毒药” now immediately clears the pending target, marks the night as finished, and notifies the player, so the action window closes cleanly without wasting the poison. Poisoning a hunter still removes their gun, but wolf king poisoning no longer alters can_shoot.
+2. room.py: Nightly poison resolution now leaves the wolf king’s can_shoot flag intact, _start_bomb_last_words() keeps the skill prompt enabled so a self-bombing wolf king/hunter can fire, and can_wolf_self_bomb() lets any alive wolf self-bomb during police speeches, PK speeches, exile speeches, and the deferred-withdraw phase. Also added the blocking logic adjustments described above.
+3. Overall behavior: Wolf king poisoned overnight still sees “可以开枪”, self-bombing wolf kings can shoot as expected, and all wolves get the 自曝 button wherever the rules require.
+
+## 2025-11-24 更新补丁2
+1. Updated room.py so idiot sheriffs now broadcast the generic “请移交警徽”, flipped idiots stay alive, still deliver last words, and lose future voting rights without blocking the day flow. Added a badge-transfer window controller: the phase now always lasts 10 seconds (with a visible countdown) before continuing to the next stage, even if the decision is made immediately or times out automatically.
+2. Added wolf self-bomb flexibility (already addressed earlier) and ensured the white-idiot flow integrates cleanly with last-words and badge follow-ups.
+3. Fixed the seer’s “放弃” button in seer.py; it now works as a regular action, ends the night turn, and sends the required private message (“今夜，你放弃查验。”).
+
+## 2025-11-24 更新补丁3（摄梦人与夜间 UI 修复）
+- roles/guard.py：将“放弃”按钮改为普通选项并直接走 skip 逻辑，确保守卫操作窗口不会被 PyWebIO 的 cancel 事件提前关闭，倒计时结束也能正确落盘。
+- roles/dreamer.py：摄梦人面板现在列出所有玩家（自己与死亡目标为灰色不可点），选中后立刻收到“今夜，你选择让 X 号 Y 梦游”的私聊提示；新增 apply_logic 流水，自动处理梦游免疫、连续两晚指定的梦境吞噬，以及摄梦人出局时的连死判定。
+- models/room.py：夜间阶段顺序调整为“女巫 → 摄梦人 → 守卫”，并在结算时统一取消 dream_immunity、dream_forced_death 与 dreamer_nick；若猎人/狼王因梦境死亡或连死，会立即失去开枪资格并收到“你无法开枪。”的私聊，同时遗言阶段的“发动技能”按钮默认置灰。
+- main.py：遗言操作面板会根据 can_shoot 状态禁用“发动技能”按钮，并阻止猎人或狼王在枪被锁定时进入技能模式，提示玩家只能“放弃”。
+- roles.md：在摄梦人条目中补充“不能对自己发动技能”的说明，使规则文档与最新客户端行为一致。

@@ -1,7 +1,6 @@
 # roles/seer.py
 from typing import Optional, List
 from pywebio.input import actions
-from utils import add_cancel_button
 from .base import RoleBase, player_action
 from enums import PlayerStatus, GameStage
 
@@ -39,7 +38,7 @@ class Seer(RoleBase):
             else:
                 buttons.append({'label': label, 'value': label})
         
-        buttons.append({'label': '放弃', 'type': 'cancel'})
+        buttons.append({'label': '放弃', 'value': '放弃', 'color': 'secondary'})
         return [
             actions(
                 name='seer_team_op',
@@ -50,8 +49,11 @@ class Seer(RoleBase):
 
     @player_action
     def identify_player(self, nick: str) -> Optional[str]:
-        if nick == '取消' or nick == '放弃':
-            return None
+        if nick in ('取消', '放弃'):
+            self.user.skill.pop('pending_target', None)
+            self.user.skill['acted_this_stage'] = True
+            self.user.send_msg('今夜，你放弃查验。')
+            return True
         
         # 解析昵称：处理 "seat. nick" 格式
         target_nick = nick.split('.', 1)[-1].strip()

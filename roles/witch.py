@@ -144,8 +144,8 @@ class Witch(RoleBase):
     def select_poison_target(self, nick: str) -> Optional[str]:
         """选择毒药目标"""
         if nick in ('不使用毒药', '取消', 'cancel_poison'):
-            self.user.skill.pop('pending_poison_target', None)
-            return 'PENDING'
+            self._finalize_poison_skip()
+            return True
         
         # 解析昵称
         target_nick = nick.split('.', 1)[-1].strip()
@@ -191,6 +191,14 @@ class Witch(RoleBase):
         self.user.skill['witch_action_notified'] = True
         self.user.skill.pop('witch_stage_ready', None)
         return True
+
+    def _finalize_poison_skip(self):
+        self.user.skill.pop('pending_poison_target', None)
+        if not self.user.skill.get('witch_action_notified', False):
+            self.user.send_msg('今晚，你未使用毒药')
+        self.user.skill['witch_action_notified'] = True
+        self.user.skill['acted_this_stage'] = True
+        self.user.skill.pop('witch_stage_ready', None)
 
     @player_action
     def skip(self):

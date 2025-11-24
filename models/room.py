@@ -121,34 +121,32 @@ class Room:
         for user in self.players.values():
             user.skill['acted_this_stage'] = False
         self.broadcast_msg('狼人请出现', tts=True)
-        await asyncio.sleep(1)
         
-        # 发送狼队成员信息给所有狼人
-        wolf_players = [u for u in self.players.values() if u.role in (Role.WOLF, Role.WOLF_KING) and u.status == PlayerStatus.ALIVE]
+        # 发送狼队成员信息给所有可行动的狼人
+        wolf_players = self.get_active_wolves()
         if wolf_players:
-            wolf_info_parts = []
-            for wolf in wolf_players:
-                if wolf.role == Role.WOLF_KING:
-                    wolf_info_parts.append(f"{wolf.seat}号(狼王)")
-                else:
-                    wolf_info_parts.append(f"{wolf.seat}号")
-            
-            wolf_info = "狼人玩家是：" + "、".join(wolf_info_parts)
-            
-            # 发送给所有狼人
+            labels = [self._format_label(u.nick) for u in wolf_players]
+            wolf_info = "狼人玩家是：" + "、".join(labels)
+            wolf_king = next((u for u in wolf_players if u.role == Role.WOLF_KING), None)
+            if wolf_king:
+                wolf_info += f"，狼王是：{self._format_label(wolf_king.nick)}"
+
             for u in wolf_players:
                 self.send_msg(wolf_info, nick=u.nick)
-        
+
         await asyncio.sleep(2)
-        
-        self.waiting = True
-        await self.wait_for_player()
+
+        if wolf_players:
+            self.waiting = True
+            await self.wait_for_player()
+        else:
+            await asyncio.sleep(1)
 
         # 统一结算狼人击杀（统计票数，最多票者为今晚被刀）
         wolf_votes = self.skill.get('wolf_votes', {})
         kill_target = None
         
-        if wolf_votes:
+        if wolf_players and wolf_votes:
             # 计算每个目标的票数
             counts = {t: len(voters) for t, voters in wolf_votes.items()}
             max_count = max(counts.values())
@@ -181,7 +179,7 @@ class Room:
             # 清理玩家临时选择
             for u in self.players.values():
                 u.skill.pop('wolf_choice', None)
-        else:
+        elif wolf_players:
             # d. 所有狼人都没有选择或点击了"放弃" -> 空刀
             for u in self.players.values():
                 if u.role in (Role.WOLF, Role.WOLF_KING):
@@ -196,9 +194,10 @@ class Room:
         night_roles = [
             (GameStage.SEER, [Role.SEER]),
             (GameStage.WITCH, [Role.WITCH]),
+            (GameStage.DREAMER, [Role.DREAMER]),
             (GameStage.GUARD, [Role.GUARD]),
             (GameStage.HUNTER, [Role.HUNTER]),
-            (GameStage.DREAMER, [Role.DREAMER]),
+            (GameStage.WOLF_KING, [Role.WOLF_KING]),
         ]
 
         for stage, role_list in night_roles:
@@ -242,12 +241,22 @@ class Room:
                 continue
             immunity = u.skill.get('dream_immunity', False)
             u.skill['dream_immunity'] = False
+            dream_cause = u.skill.pop('dream_forced_death', None)
+
+            if dream_cause:
+                u.status = PlayerStatus.DEAD
+                dead_this_night.append(u.nick)
+                if u.role in (Role.HUNTER, Role.WOLF_KING):
+                    u.skill['can_shoot'] = False
+                    u.send_msg('你无法开枪。')
+                u.skill.pop('dreamer_nick', None)
+                continue
 
             if u.status == PlayerStatus.PENDING_POISON:
                 if not immunity:
                     u.status = PlayerStatus.DEAD
                     dead_this_night.append(u.nick)
-                    if u.role in (Role.HUNTER, Role.WOLF_KING):
+                    if u.role == Role.HUNTER:
                         u.skill['can_shoot'] = False
                 else:
                     u.status = PlayerStatus.ALIVE
@@ -263,6 +272,20 @@ class Room:
                 u.status = PlayerStatus.ALIVE
             else:
                 u.status = PlayerStatus.ALIVE
+
+        dreamers = [user for user in self.players.values() if user.role == Role.DREAMER]
+        if dreamers:
+            for dreamer_player in dreamers:
+                for candidate in self.players.values():
+                    if candidate.skill.get('dreamer_nick') != dreamer_player.nick:
+                        continue
+                    if dreamer_player.status == PlayerStatus.DEAD and candidate.status != PlayerStatus.DEAD:
+                        candidate.status = PlayerStatus.DEAD
+                        dead_this_night.append(candidate.nick)
+                        if candidate.role in (Role.HUNTER, Role.WOLF_KING):
+                            candidate.skill['can_shoot'] = False
+                            candidate.send_msg('你无法开枪。')
+                    candidate.skill.pop('dreamer_nick', None)
 
         self.death_pending = dead_this_night
         self.broadcast_msg('天亮请睁眼', tts=True)
@@ -353,6 +376,12 @@ class Room:
     def list_pending_kill_players(self) -> List[User]:
         """返回本夜被标记为待死亡（被狼人击中）的玩家列表"""
         return [u for u in self.players.values() if u.status == PlayerStatus.PENDING_DEAD]
+
+    def get_active_wolves(self) -> List[User]:
+        return [
+            u for u in self.players.values()
+            if u.role in (Role.WOLF, Role.WOLF_KING) and u.status != PlayerStatus.DEAD
+        ]
 
     def is_full(self) -> bool:
         return len(self.players) >= len(self.roles)
@@ -471,11 +500,11 @@ class Room:
                 return True
             return False
         if self.stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
-            return self.current_speaker == user.nick
+            day_phase = (self.day_state or {}).get('phase')
+            return day_phase in ('exile_speech', 'exile_pk_speech')
         state = self.sheriff_state or {}
         if self.stage == GameStage.SHERIFF and state.get('phase') == 'deferred_withdraw':
-            candidates = self.get_active_sheriff_candidates()
-            return user.nick in candidates
+            return True
         return False
 
     def get_active_sheriff_candidates(self) -> List[str]:
@@ -703,7 +732,12 @@ class Room:
             skip_first_skill_msg=True,
             disable_skill_prompt=True
         )
-        self.start_last_words(queue, allow_speech=False, after_stage='badge_transfer')
+        self.start_last_words(
+            queue,
+            allow_speech=False,
+            after_stage='badge_transfer',
+            disable_skill_prompt=False
+        )
 
     def _check_auto_elect(self):
         state = self.sheriff_state or {}
@@ -1056,9 +1090,7 @@ class Room:
         skip_first_skill_msg: bool = False,
         disable_skill_prompt: bool = False
     ):
-        valid_queue = [nick for nick in queue if nick in self.players]
-        if randomize and len(valid_queue) > 1:
-            random.shuffle(valid_queue)
+        valid_queue = self._sanitize_last_words_queue(queue, randomize)
         if not valid_queue:
             if after_stage == 'exile_speech':
                 self.start_exile_speech()
@@ -1073,26 +1105,13 @@ class Room:
         self.day_state['last_words_skip_skill_prompt'] = disable_skill_prompt
         self.stage = GameStage.LAST_WORDS
         for nick in valid_queue:
-            player = self.players.get(nick)
-            if not player:
-                continue
-            if disable_skill_prompt:
-                player.skill['last_words_skill_resolved'] = True
-                player.skill['last_words_done'] = False
-                player.skill['pending_last_skill'] = False
-            else:
-                player.skill['last_words_skill_resolved'] = False
-                player.skill['last_words_done'] = False
-                player.skill['pending_last_skill'] = False
+            self._prepare_last_words_player(self.players.get(nick), disable_skill_prompt)
         if disable_skill_prompt:
             self.day_state['last_word_skill_announced'] = True
         else:
             self.day_state['last_word_skill_announced'] = skip_first_skill_msg
         self.day_state['last_word_speech_announced'] = False
-        if disable_skill_prompt:
-            self._prompt_current_last_word_speech()
-        elif not skip_first_skill_msg:
-            self._announce_last_word_skill()
+        self._kickoff_last_word_prompt()
 
     def handle_last_word_skill_choice(self, user: User, choice: str):
         if self.day_state.get('phase') != 'last_words':
@@ -1100,6 +1119,9 @@ class Room:
         if user.nick != self.day_state.get('current_last_word'):
             return
         if choice == '发动技能':
+            if user.role in (Role.HUNTER, Role.WOLF_KING) and not user.skill.get('can_shoot', True):
+                user.send_msg('你无法发动技能，请选择放弃。')
+                return
             user.skill['pending_last_skill'] = True
         else:
             user.skill['pending_last_skill'] = False
@@ -1128,25 +1150,16 @@ class Room:
             self.day_state['current_last_word'] = queue[0]
             self.day_state['last_word_speech_announced'] = False
             skip_skill_prompt = self.day_state.get('last_words_skip_skill_prompt', False)
-            if skip_skill_prompt:
-                self.day_state['last_word_skill_announced'] = True
-                self._prompt_current_last_word_speech()
-            else:
-                self.day_state['last_word_skill_announced'] = False
-                self._announce_last_word_skill()
-            player = self.players.get(queue[0])
-            if player:
-                if skip_skill_prompt:
-                    player.skill['last_words_skill_resolved'] = True
-                else:
-                    player.skill['last_words_skill_resolved'] = False
-                player.skill['last_words_done'] = False
-                player.skill['pending_last_skill'] = False
+            self._prepare_last_words_player(self.players.get(queue[0]), skip_skill_prompt)
+            self.day_state['last_word_skill_announced'] = skip_skill_prompt
+            self._kickoff_last_word_prompt()
         else:
+            self._schedule_victory_check()
             next_stage = self.day_state.get('after_last_words')
             if next_stage == 'exile_speech':
                 self.prompt_sheriff_order()
             elif next_stage == 'badge_transfer':
+                self._mark_followup_skills_resolved()
                 self._start_badge_transfer_phase()
             elif next_stage == 'end_day':
                 self._finalize_day_execution()
@@ -1170,6 +1183,87 @@ class Room:
         if not self.day_state.get('last_word_speech_announced', False):
             self.broadcast_msg(f'请{self._format_label(current)}发表遗言')
             self.day_state['last_word_speech_announced'] = True
+            self.day_state['last_word_skill_announced'] = True
+
+    def _sanitize_last_words_queue(self, queue: List[str], randomize: bool) -> List[str]:
+        valid_queue = [nick for nick in queue if nick in self.players]
+        if randomize and len(valid_queue) > 1:
+            random.shuffle(valid_queue)
+        return valid_queue
+
+    def _prepare_last_words_player(self, player: Optional[User], disable_skill_prompt: bool):
+        if not player:
+            return
+        supports_skill = self._player_supports_last_skill(player)
+        if disable_skill_prompt or not supports_skill:
+            player.skill['last_words_skill_resolved'] = True
+        else:
+            player.skill['last_words_skill_resolved'] = False
+        player.skill['last_words_done'] = False
+        player.skill['pending_last_skill'] = False
+
+    def _player_supports_last_skill(self, player: Optional[User]) -> bool:
+        if not player or not player.role_instance:
+            return False
+        supports = getattr(player.role_instance, 'supports_last_skill', None)
+        if supports is None:
+            return False
+        return bool(supports())
+
+    def _mark_followup_skills_resolved(self):
+        followup = self.day_state.get('pending_badge_followup')
+        if not followup:
+            return
+        followup['disable_skill_prompt'] = True
+        followup['skip_first_skill_msg'] = True
+
+    def _kickoff_last_word_prompt(self):
+        if self.day_state.get('phase') != 'last_words':
+            return
+        current = self.day_state.get('current_last_word')
+        if not current:
+            return
+        player = self.players.get(current)
+        if not player:
+            return
+        allow_speech = self.day_state.get('last_words_allow_speech', True)
+        skip_skill_prompt = self.day_state.get('last_words_skip_skill_prompt', False)
+
+        if skip_skill_prompt:
+            self.day_state['last_word_skill_announced'] = True
+            if allow_speech:
+                if not self.day_state.get('last_word_speech_announced', False):
+                    self._prompt_current_last_word_speech()
+            else:
+                player.skill['last_words_done'] = True
+                self._advance_last_words_if_ready(player)
+            return
+
+        if not self._player_supports_last_skill(player):
+            player.skill['last_words_skill_resolved'] = True
+            player.skill['pending_last_skill'] = False
+
+        if player.skill.get('last_words_skill_resolved', False):
+            self.day_state['last_word_skill_announced'] = True
+            if allow_speech:
+                if not player.skill.get('last_words_done', False):
+                    self._prompt_current_last_word_speech()
+            else:
+                player.skill['last_words_done'] = True
+                self._advance_last_words_if_ready(player)
+            return
+
+        if not self.day_state.get('last_word_skill_announced', False):
+            self._announce_last_word_skill()
+
+    def _schedule_victory_check(self):
+        if self.game_over:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self.check_game_end())
 
     def prompt_sheriff_order(self):
         pending = self.skill.get('pending_day_bombs')
@@ -1617,11 +1711,58 @@ class Room:
         player.skill['badge_action_taken'] = False
         self.day_state['phase'] = 'badge_transfer'
         self.stage = GameStage.BADGE_TRANSFER
+        self.day_state['badge_transfer_action_done'] = False
+        self.day_state['badge_transfer_timer_elapsed'] = False
+        self._schedule_badge_transfer_timer()
         self.broadcast_msg(f'{self._format_label(captain)}需要移交或撕毁警徽。')
 
     def _complete_badge_transfer_phase(self):
         if self.stage != GameStage.BADGE_TRANSFER:
             return
+        self.day_state['badge_transfer_action_done'] = True
+        self._try_finalize_badge_transfer_phase()
+
+    def _schedule_badge_transfer_timer(self, seconds: int = 10):
+        task = self.day_state.get('badge_transfer_timer_task')
+        if task:
+            task.cancel()
+        self.day_state['badge_transfer_timer_task'] = asyncio.create_task(
+            self._badge_transfer_timer(seconds)
+        )
+
+    async def _badge_transfer_timer(self, seconds: int):
+        try:
+            await asyncio.sleep(seconds)
+        except asyncio.CancelledError:
+            return
+        self.day_state['badge_transfer_timer_task'] = None
+        self.day_state['badge_transfer_timer_elapsed'] = True
+        if self.stage != GameStage.BADGE_TRANSFER:
+            return
+        if not self.day_state.get('badge_transfer_action_done'):
+            captain_nick = self.skill.get('sheriff_captain')
+            player = self.players.get(captain_nick) if captain_nick else None
+            if player and not player.skill.get('badge_action_taken', False):
+                self.handle_sheriff_badge_action(player, 'destroy')
+                return
+        self._try_finalize_badge_transfer_phase()
+
+    def _try_finalize_badge_transfer_phase(self):
+        if self.stage != GameStage.BADGE_TRANSFER:
+            return
+        if not (
+            self.day_state.get('badge_transfer_action_done') and
+            self.day_state.get('badge_transfer_timer_elapsed')
+        ):
+            return
+        self._finalize_badge_transfer_phase()
+
+    def _finalize_badge_transfer_phase(self):
+        task = self.day_state.pop('badge_transfer_timer_task', None)
+        if task:
+            task.cancel()
+        self.day_state.pop('badge_transfer_action_done', None)
+        self.day_state.pop('badge_transfer_timer_elapsed', None)
         self.stage = None
         self.day_state['phase'] = 'badge_transfer_done'
         self._launch_badge_followup()
@@ -1667,16 +1808,30 @@ class Room:
                 if player:
                     player.status = PlayerStatus.DEAD
         self.end_day_phase()
+        self._schedule_victory_check()
 
     def _handle_idiot_flip(self, player: User):
         player.skill['idiot_flipped'] = True
         player.skill['idiot_vote_banned'] = True
+        player.status = PlayerStatus.ALIVE
         self.day_state['pending_execution'] = None
+        day_deaths = self.day_state.get('day_deaths') or []
+        if player.nick in day_deaths:
+            self.day_state['day_deaths'] = [n for n in day_deaths if n != player.nick]
+        else:
+            self.day_state['day_deaths'] = day_deaths
         self.broadcast_msg(f"{self._format_label(player.nick)}翻牌为白痴，免除本次放逐。")
         if self.skill.get('sheriff_captain') == player.nick:
             player.skill['idiot_badge_transfer_required'] = True
-            self.broadcast_msg('请该白痴警长立即移交警徽。')
-        self.end_day_phase()
+            self.broadcast_msg('请移交警徽。')
+        self.start_last_words(
+            [player.nick],
+            allow_speech=True,
+            after_stage='end_day',
+            randomize=False,
+            skip_first_skill_msg=True,
+            disable_skill_prompt=True
+        )
 
     def end_day_phase(self):
         self.day_state['phase'] = 'done'

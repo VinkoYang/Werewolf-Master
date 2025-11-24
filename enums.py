@@ -30,6 +30,7 @@ class GameStage(Enum):
     WITCH = '女巫'
     GUARD = '守卫'
     HUNTER = '猎人'
+    WOLF_KING = '狼王'
     DREAMER = '摄梦人'          # 摄梦人阶段
     SHERIFF = '上警'           # 上警阶段
     SPEECH = '发言'            # 竞选发言阶段
