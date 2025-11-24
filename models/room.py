@@ -1684,11 +1684,58 @@ class Room:
         player.skill['badge_action_taken'] = False
         self.day_state['phase'] = 'badge_transfer'
         self.stage = GameStage.BADGE_TRANSFER
+        self.day_state['badge_transfer_action_done'] = False
+        self.day_state['badge_transfer_timer_elapsed'] = False
+        self._schedule_badge_transfer_timer()
         self.broadcast_msg(f'{self._format_label(captain)}需要移交或撕毁警徽。')
 
     def _complete_badge_transfer_phase(self):
         if self.stage != GameStage.BADGE_TRANSFER:
             return
+        self.day_state['badge_transfer_action_done'] = True
+        self._try_finalize_badge_transfer_phase()
+
+    def _schedule_badge_transfer_timer(self, seconds: int = 10):
+        task = self.day_state.get('badge_transfer_timer_task')
+        if task:
+            task.cancel()
+        self.day_state['badge_transfer_timer_task'] = asyncio.create_task(
+            self._badge_transfer_timer(seconds)
+        )
+
+    async def _badge_transfer_timer(self, seconds: int):
+        try:
+            await asyncio.sleep(seconds)
+        except asyncio.CancelledError:
+            return
+        self.day_state['badge_transfer_timer_task'] = None
+        self.day_state['badge_transfer_timer_elapsed'] = True
+        if self.stage != GameStage.BADGE_TRANSFER:
+            return
+        if not self.day_state.get('badge_transfer_action_done'):
+            captain_nick = self.skill.get('sheriff_captain')
+            player = self.players.get(captain_nick) if captain_nick else None
+            if player and not player.skill.get('badge_action_taken', False):
+                self.handle_sheriff_badge_action(player, 'destroy')
+                return
+        self._try_finalize_badge_transfer_phase()
+
+    def _try_finalize_badge_transfer_phase(self):
+        if self.stage != GameStage.BADGE_TRANSFER:
+            return
+        if not (
+            self.day_state.get('badge_transfer_action_done') and
+            self.day_state.get('badge_transfer_timer_elapsed')
+        ):
+            return
+        self._finalize_badge_transfer_phase()
+
+    def _finalize_badge_transfer_phase(self):
+        task = self.day_state.pop('badge_transfer_timer_task', None)
+        if task:
+            task.cancel()
+        self.day_state.pop('badge_transfer_action_done', None)
+        self.day_state.pop('badge_transfer_timer_elapsed', None)
         self.stage = None
         self.day_state['phase'] = 'badge_transfer_done'
         self._launch_badge_followup()
@@ -1739,12 +1786,25 @@ class Room:
     def _handle_idiot_flip(self, player: User):
         player.skill['idiot_flipped'] = True
         player.skill['idiot_vote_banned'] = True
+        player.status = PlayerStatus.ALIVE
         self.day_state['pending_execution'] = None
+        day_deaths = self.day_state.get('day_deaths') or []
+        if player.nick in day_deaths:
+            self.day_state['day_deaths'] = [n for n in day_deaths if n != player.nick]
+        else:
+            self.day_state['day_deaths'] = day_deaths
         self.broadcast_msg(f"{self._format_label(player.nick)}翻牌为白痴，免除本次放逐。")
         if self.skill.get('sheriff_captain') == player.nick:
             player.skill['idiot_badge_transfer_required'] = True
-            self.broadcast_msg('请该白痴警长立即移交警徽。')
-        self.end_day_phase()
+            self.broadcast_msg('请移交警徽。')
+        self.start_last_words(
+            [player.nick],
+            allow_speech=True,
+            after_stage='end_day',
+            randomize=False,
+            skip_first_skill_msg=True,
+            disable_skill_prompt=True
+        )
 
     def end_day_phase(self):
         self.day_state['phase'] = 'done'

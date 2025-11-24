@@ -546,3 +546,8 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 1. witch.py: “不使用毒药” now immediately clears the pending target, marks the night as finished, and notifies the player, so the action window closes cleanly without wasting the poison. Poisoning a hunter still removes their gun, but wolf king poisoning no longer alters can_shoot.
 2. room.py: Nightly poison resolution now leaves the wolf king’s can_shoot flag intact, _start_bomb_last_words() keeps the skill prompt enabled so a self-bombing wolf king/hunter can fire, and can_wolf_self_bomb() lets any alive wolf self-bomb during police speeches, PK speeches, exile speeches, and the deferred-withdraw phase. Also added the blocking logic adjustments described above.
 3. Overall behavior: Wolf king poisoned overnight still sees “可以开枪”, self-bombing wolf kings can shoot as expected, and all wolves get the 自曝 button wherever the rules require.
+
+## 2025-11-24 更新补丁2
+1. Updated room.py so idiot sheriffs now broadcast the generic “请移交警徽”, flipped idiots stay alive, still deliver last words, and lose future voting rights without blocking the day flow. Added a badge-transfer window controller: the phase now always lasts 10 seconds (with a visible countdown) before continuing to the next stage, even if the decision is made immediately or times out automatically.
+2. Added wolf self-bomb flexibility (already addressed earlier) and ensured the white-idiot flow integrates cleanly with last-words and badge follow-ups.
+3. Fixed the seer’s “放弃” button in seer.py; it now works as a regular action, ends the night turn, and sends the required private message (“今夜，你放弃查验。”).
