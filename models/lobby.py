@@ -23,31 +23,27 @@ from pywebio.pin import pin_on_change, pin_update, put_input
 from pywebio.session import run_js
 
 from enums import GuardRule, Role, SheriffBombRule, WitchRule
+from presets.game_config_presets import (
+    DEFAULT_ROOM_RULES,
+    PRESET_CUSTOM,
+)
+from presets.game_config_registry import (
+    get_special_preset_sections,
+    get_special_preset_templates,
+)
 from models.room import Room
 from models.system import Global
 from models.user import User
 from utils import make_scope_name
 
-DEFAULT_ROOM_RULES = {
-    'witch_rule': WitchRule.SELF_RESCUE_FIRST_NIGHT_ONLY.value,
-    'guard_rule': GuardRule.MED_CONFLICT.value,
-    'sheriff_bomb_rule': SheriffBombRule.DOUBLE_LOSS.value,
-}
-
-PRESET_CUSTOM = 'preset_custom'
-PRESET_STANDARD_12 = 'preset_standard_12'
 PRESET_DEV_3 = 'preset_dev_3'
 PRESET_DEV_6 = 'preset_dev_6'
 PRESET_DEV_7 = 'preset_dev_7'
 
+SPECIAL_PRESET_TEMPLATES = get_special_preset_templates()
+
 ROOM_PRESET_CONFIGS = {
-    PRESET_STANDARD_12: {
-        **DEFAULT_ROOM_RULES,
-        'wolf_num': 4,
-        'god_wolf': [],
-        'citizen_num': 4,
-        'god_citizen': ['预言家', '女巫', '猎人', '白痴'],
-    },
+    **SPECIAL_PRESET_TEMPLATES,
     PRESET_DEV_3: {
         **DEFAULT_ROOM_RULES,
         'wolf_num': 1,
@@ -75,9 +71,7 @@ ROOM_CREATION_SECTIONS = [
     ('自定义', [
         {'label': '手动配置', 'value': PRESET_CUSTOM, 'color': 'primary'},
     ]),
-    ('12人版型', [
-        {'label': '12人标准局：预女猎白', 'value': PRESET_STANDARD_12, 'color': 'success'},
-    ]),
+    *get_special_preset_sections(),
     ('开发者测试版型', [
         {'label': '3人测试板子', 'value': PRESET_DEV_3},
         {'label': '预女猎守1狼6人测试', 'value': PRESET_DEV_6},
@@ -246,12 +240,22 @@ async def select_room_creation_preset() -> Optional[str]:
         section_blocks.append(put_markdown(f"### {title}"))
         section_blocks.append(put_buttons(buttons, onclick=_resolve))
 
-    header = put_row([
-        put_text('创建房间'),
-        put_button('✕', onclick=_cancel, color='danger', outline=True)
-    ], size='90% 10%')
+    close_btn = style(
+        put_button('✕', onclick=_cancel, color='danger', outline=True),
+        "position: absolute; top: 0; right: 0; z-index: 10;"
+    )
 
-    popup('创建房间', put_column([header, put_column(section_blocks)]), closable=False)
+    dialog_body = style(
+        put_column([close_btn, put_column(section_blocks)]),
+        "position: relative; max-height: calc(100vh - 260px); overflow-y: auto;"
+    )
+
+    popup(
+        '创建房间',
+        style(dialog_body, "display:inline-block; min-height:0;"),
+        'width:auto; max-width:520px; height:auto; min-height:0; padding:0;',
+        closable=False
+    )
     choice = await future
     return choice
 

@@ -7,6 +7,8 @@
 
 Preview
 --
+![目前版型](doc/lobby.png)
+
 ![房间设置界面](doc/room_setting.png)
 
 狼人
@@ -60,6 +62,8 @@ python main.py
 - `models/system.py`：`Global` 负责注册/查询房间与用户；`Config` 存放系统昵称等常量。
 - `models/user.py`：封装玩家实体，管理个人状态、消息同步与角色实例（`role_instance`）。
 - `models/room.py`：房间核心逻辑，负责角色分配、昼夜循环、投票结算等。
+- `presets/game_config_base.py` & `presets/game_config_*.py`：封装夜晚/胜负流程的策略类；不同版型拥有独立脚本，互不依赖，只共享 BaseGameConfig。
+- `presets/game_config_registry.py`：集中注册所有 game_config_* 元数据，负责版型检测与大厅预设模板输出。
 - `models/lobby.py`：大厅 UI 与房间创建/加入流程，包含预设板子、链接跳转等展示逻辑。
 - `roles/` 目录：每个角色一个文件，继承 `roles/base.py` 的 `RoleBase`，实现自身技能及 UI。
 - `utils.py`：工具函数（随机数、语音播报、网络信息、Scope 命名等），提供跨模块公用能力。
@@ -398,6 +402,31 @@ hunter.py：将开枪入口适配为支持确认（占位式实现，开枪目�
 房主可在创建房间和房间配置界面选择规则：
 单爆吞警徽
 双爆吞警徽（默认）
+
+## 5️⃣ 预设版型（2025-11-25 更新）
+所有 12 人特殊局已拆分为独立 `game_config_*.py` 脚本，可单独扩展夜晚顺序与胜负判定：
+
+1. **12人标准局：预女猎白** (`game_config_12p_std.py`)
+    - 角色：4 狼 / 4 村 / 预言家 / 女巫 / 猎人 / 白痴
+    - 顺序：普狼 → 预言家 → 女巫 → 猎人 → 白痴（默认流程会自动跳过未配置的阶段）
+
+2. **预女猎白混** (`game_config_12p_half_blood_mix.py`)
+    - 角色：4 狼 / 3 村 / 混血儿 / 预女猎白
+    - 顺序：混血儿（首夜认亲）→ 普狼 → 预言家 → 女巫 → 猎人 → 白痴
+
+3. **白狼王 - 预女猎守** (`game_config_white_wolf_guard.py`)
+    - 角色：白狼王 + 3 狼 / 4 村 / 预言家 / 女巫 / 猎人 / 守卫
+    - 顺序：普狼+白狼王 → 守卫 → 预言家 → 女巫 → 猎人
+
+4. **黑狼王 - 预女猎守** (`game_config_wolf_king_guard.py`)
+    - 角色：狼王 + 3 狼 / 4 村 / 预言家 / 女巫 / 猎人 / 守卫
+    - 顺序：普狼+黑狼王 → 守卫 → 预言家 → 女巫 → 猎人 → 黑狼王
+
+5. **黑狼王 - 预女猎摄** (`game_config_wolf_king_dreamer.py`)
+    - 角色：狼王 + 3 狼 / 4 村 / 预言家 / 女巫 / 猎人 / 摄梦人
+    - 顺序：摄梦人 → 普狼+黑狼王 → 预言家 → 女巫 → 猎人 → 黑狼王
+
+房主在大厅创建房间时可直接点击对应版型按钮，后台会根据角色配置自动选择唯一的 `game_config_*.py`，无匹配时回退到通用 `game_config_general.py`。
 规则持久化到 Room.sheriff_bomb_rule 字段
 3. 警徽移交与撕毁
 警长死亡时，在遗言阶段显示专属操作面板：
@@ -512,3 +541,13 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 1. 将大厅页面、房间预设、外部链接、房间加入等逻辑从 `main.py` 抽离到 `models/lobby.py`，`main.py` 仅负责调用异步接口。
 2. `make_scope_name()` 移动到 `utils.py`，方便大厅与其它界面共享统一的 Scope 命名策略。
 3. README 重新梳理模块分层与运行流程，突出大厅模块的位置，方便后续维护大厅 UI。
+
+## 2025-11-25 结构与 UI 更新
+1. **Preset 目录重组**
+    - 新增顶级 `presets/` 目录，集中存放 `game_config_base.py` 以及所有 `game_config_*.py` 版型脚本。
+    - 提供 `presets/__init__.py`，并让 `models/room.py`、`models/lobby.py` 统一从 `presets.*` 导入 BaseGameConfig、预设元数据与注册表，消除 `models` 与版型模块的耦合。
+    - 清理 `game_config_registry.py` 中残留的补丁标记，避免在 `python main.py` 启动时因语法错误导致导入失败。
+2. **大厅“创建房间”弹窗体验**
+    - 关闭按钮固定在弹窗右上角，不再占据正文布局空间。
+    - Popup 根据内容自适应高度，设定 `max-height: calc(100vh - 260px)` 上限，必要时自动出现滚动条，彻底解决下方大量空白的问题。
+    - 同时复用新的样式字符串，保证弹窗宽度约为 520px，在桌面端与移动端都保持一致的排版。
