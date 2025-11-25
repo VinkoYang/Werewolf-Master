@@ -118,6 +118,7 @@ class DefaultGameFlow(BaseGameConfig):
                     candidate.skill.pop('dreamer_nick', None)
 
         room.death_pending = dead_this_night
+        room.update_nine_tailed_state()
         room.broadcast_msg('天亮请睁眼', tts=True)
         await asyncio.sleep(2)
         needs_sheriff_phase = False

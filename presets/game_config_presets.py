@@ -14,5 +14,6 @@ PRESET_HALF_BLOOD_MIX = 'preset_half_blood_mix'
 PRESET_WHITE_WOLF_GUARD = 'preset_white_wolf_guard'
 PRESET_WOLF_KING_GUARD = 'preset_wolf_king_guard'
 PRESET_WOLF_KING_DREAMER = 'preset_wolf_king_dreamer'
+PRESET_NINE_TAILED_FOX = 'preset_nine_tailed_fox'
 
 SPECIAL_PRESET_SECTION = '12人版型'

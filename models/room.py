@@ -29,6 +29,7 @@ from roles.dreamer import Dreamer
 from roles.idiot import Idiot
 from roles.half_blood import HalfBlood
 from roles.white_wolf_king import WhiteWolfKing
+from roles.nine_tailed_fox import NineTailedFox
 
 role_classes = {
     Role.CITIZEN: Citizen,
@@ -42,6 +43,7 @@ role_classes = {
     Role.DREAMER: Dreamer,
     Role.IDIOT: Idiot,
     Role.HALF_BLOOD: HalfBlood,
+    Role.NINE_TAILED_FOX: NineTailedFox,
 }
 
 
@@ -200,6 +202,7 @@ class Room:
         self.broadcast_msg(f"{nick} 被投票出局", tts=True)
         if player.role in (Role.HUNTER, Role.WOLF_KING) and player.skill.get('can_shoot', False):
             player.send_msg('你被投票出局，立即开枪！')
+        self.update_nine_tailed_state()
 
     # -------------------- 警长阶段逻辑 --------------------
     def init_sheriff_phase(self):
@@ -286,6 +289,16 @@ class Room:
         base = state.get('pk_candidates') if state.get('phase') in ('pk_speech', 'await_pk_vote', 'pk_vote') and state.get('pk_candidates') else state.get('up', [])
         active = [nick for nick in base if nick not in state.get('withdrawn', []) and self._is_sheriff_eligible(nick)]
         return active
+
+    def update_nine_tailed_state(self, include_pending: bool = False):
+        """Refresh 九尾妖狐尾巴结算，必要时触发死亡。"""
+        for user in self.players.values():
+            inst = getattr(user, 'role_instance', None)
+            if isinstance(inst, NineTailedFox):
+                try:
+                    inst.refresh_tail_state(include_pending=include_pending, register_death=True)
+                except Exception:
+                    logger.exception('九尾妖狐尾巴结算失败')
 
     def record_sheriff_choice(self, user: User, choice: str):
         state = self.sheriff_state or {}
@@ -1702,6 +1715,7 @@ class Room:
                 player = self.players.get(exec_target)
                 if player:
                     player.status = PlayerStatus.DEAD
+        self.update_nine_tailed_state()
         self.end_day_phase()
         self._schedule_victory_check()
 
