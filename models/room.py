@@ -4,12 +4,14 @@ import random
 from collections import Counter
 from copy import copy
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Tuple, Union, Any
+from typing import Optional, List, Dict, Tuple, Union, Any, Type
 
 from pywebio.session import run_async
 from pywebio.session.coroutinebased import TaskHandler
 
 from enums import Role, WitchRule, GuardRule, SheriffBombRule, GameStage, LogCtrl, PlayerStatus
+from presets.game_config_base import BaseGameConfig, WOLF_TEAM_ROLES
+from presets.game_config_registry import resolve_game_config_class
 from models.system import Global, Config
 from models.user import User
 from utils import say
@@ -42,7 +44,6 @@ role_classes = {
     Role.HALF_BLOOD: HalfBlood,
 }
 
-WOLF_TEAM_ROLES = {Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING}
 
 @dataclass
 class Room:
@@ -63,6 +64,7 @@ class Room:
 
     logic_thread: Optional[TaskHandler] = None
     game_over: bool = False
+    _game_config: Optional[BaseGameConfig] = field(default=None, init=False, repr=False)
 
     death_pending: List[str] = field(default_factory=list)
     current_speaker: Optional[str] = None
@@ -72,11 +74,22 @@ class Room:
     day_state: Dict[str, Any] = field(default_factory=dict)
     sheriff_badge_destroyed: bool = False
 
+    def _ensure_game_config(self) -> BaseGameConfig:
+        """Lazily initialize the game configuration handler."""
+        if self._game_config is None:
+            config_cls = self._resolve_game_config_class()
+            self._game_config = config_cls(self)
+        return self._game_config
+
+    def _resolve_game_config_class(self) -> Type[BaseGameConfig]:
+        return resolve_game_config_class(self.roles)
+
     async def start_game(self):
         if self.started or len(self.players) < len(self.roles):
             return
         self.started = True
         self.game_over = False
+        self._ensure_game_config()
         # 在游戏开始时添加公共隔断，提升可读性
         self.broadcast_msg('=' * 22)
         self.broadcast_msg("游戏开始！身份发放中...", tts=True)
@@ -106,314 +119,28 @@ class Room:
         self.waiting = False
 
     async def game_loop(self):
-        while not self.game_over:
-            if not self.started:
-                await asyncio.sleep(1); continue
-            await self.night_logic()
-            await self.check_game_end()
-            await asyncio.sleep(1)
-        self.logic_thread = None
+        return await self._ensure_game_config().game_loop()
 
     async def night_logic(self):
-        logger.info(f"=== 第 {self.round + 1} 夜 开始 ===")
-        self.round += 1
-        # 在天黑提示前加上夜数隔断，便于在 Public 区分每晚开始
-        self.broadcast_msg(f"============ 第 {self.round} 晚 ============")
-        self.broadcast_msg('天黑请闭眼', tts=True)
-        await asyncio.sleep(3)
-
-        # ---------- 混血儿第一夜认亲 ----------
-        if self.round == 1 and self._has_configured_role([Role.HALF_BLOOD]):
-            self.stage = GameStage.HALF_BLOOD
-            for user in self.players.values():
-                user.skill['acted_this_stage'] = False
-            self.broadcast_msg('混血儿请出现', tts=True)
-            await asyncio.sleep(1)
-
-            if self._has_active_role([Role.HALF_BLOOD]):
-                self.waiting = True
-                await self.wait_for_player()
-                self._ensure_half_blood_choices()
-            else:
-                await asyncio.sleep(5)
-
-            await asyncio.sleep(1)
-            self.broadcast_msg('混血儿请闭眼', tts=True)
-            await asyncio.sleep(2)
-
-        # ---------- 狼人 ----------
-        self.stage = GameStage.WOLF
-        for user in self.players.values():
-            user.skill['acted_this_stage'] = False
-        self.broadcast_msg('狼人请出现', tts=True)
-        
-        # 发送狼队成员信息给所有可行动的狼人
-        wolf_players = self.get_active_wolves()
-        if wolf_players:
-            labels = [self._format_label(u.nick) for u in wolf_players]
-            wolf_info = "狼人玩家是：" + "、".join(labels)
-            wolf_king = next((u for u in wolf_players if u.role == Role.WOLF_KING), None)
-            if wolf_king:
-                wolf_info += f"，狼王是：{self._format_label(wolf_king.nick)}"
-            white_king = next((u for u in wolf_players if u.role == Role.WHITE_WOLF_KING), None)
-            if white_king:
-                wolf_info += f"，白狼王是：{self._format_label(white_king.nick)}"
-
-            for u in wolf_players:
-                self.send_msg(wolf_info, nick=u.nick)
-
-        await asyncio.sleep(2)
-
-        if wolf_players:
-            self.waiting = True
-            await self.wait_for_player()
-        else:
-            await asyncio.sleep(1)
-
-        # 统一结算狼人击杀（统计票数，最多票者为今晚被刀）
-        wolf_votes = self.skill.get('wolf_votes', {})
-        kill_target = None
-        
-        if wolf_players and wolf_votes:
-            # 计算每个目标的票数
-            counts = {t: len(voters) for t, voters in wolf_votes.items()}
-            max_count = max(counts.values())
-            candidates = [t for t, c in counts.items() if c == max_count]
-            
-            # 根据需求3判断：
-            # a. 单个玩家 -> 直接选择
-            # b. 多个玩家最多票 -> 选择最多票的
-            # c. 平票 -> 随机选择
-            if len(candidates) == 1:
-                chosen = candidates[0]
-            else:
-                # 平票情况，随机选择
-                chosen = random.choice(candidates)
-            
-            target = self.players.get(chosen)
-            if target and target.status == PlayerStatus.ALIVE:
-                target.status = PlayerStatus.PENDING_DEAD
-                kill_target = target
-            
-            # 发送击杀结果给所有狼人（包括未行动的狼人）
-            target_seat = target.seat if target else '?'
-            for u in self.players.values():
-                if u.role in WOLF_TEAM_ROLES:
-                    self.send_msg(f"今夜，狼队选择{target_seat}号玩家被击杀。", nick=u.nick)
-            
-            # 清理投票记录
-            if 'wolf_votes' in self.skill:
-                del self.skill['wolf_votes']
-            # 清理玩家临时选择
-            for u in self.players.values():
-                u.skill.pop('wolf_choice', None)
-        elif wolf_players:
-            # d. 所有狼人都没有选择或点击了"放弃" -> 空刀
-            for u in self.players.values():
-                if u.role in WOLF_TEAM_ROLES:
-                    self.send_msg("今夜，狼队空刀。", nick=u.nick)
-
-        # 延迟3秒后再显示"狼人请闭眼"
-        await asyncio.sleep(3)
-        self.broadcast_msg('狼人请闭眼', tts=True)
-        await asyncio.sleep(2)
-
-        # ---------- 其他神职 ----------
-        night_roles = [
-            (GameStage.SEER, [Role.SEER]),
-            (GameStage.WITCH, [Role.WITCH]),
-            (GameStage.DREAMER, [Role.DREAMER]),
-            (GameStage.GUARD, [Role.GUARD]),
-            (GameStage.HUNTER, [Role.HUNTER]),
-            (GameStage.WOLF_KING, [Role.WOLF_KING]),
-        ]
-
-        for stage, role_list in night_roles:
-            if not self._has_configured_role(role_list):
-                continue
-
-            self.stage = stage
-            for user in self.players.values():
-                user.skill['acted_this_stage'] = False
-
-            self.broadcast_msg(f'{stage.value}请出现', tts=True)
-            await asyncio.sleep(1)
-
-            # 女巫阶段：发送私聊信息给女巫
-            if stage == GameStage.WITCH:
-                for u in self.players.values():
-                    if u.role == Role.WITCH and u.status == PlayerStatus.ALIVE:
-                        # 女巫睡眼信息将在 get_actions 中发送（显示今夜被杀信息）
-                        pass
-
-            if self._has_active_role(role_list):
-                self.waiting = True
-                await self.wait_for_player()
-            else:
-                # 无对应在场角色，仍保留夜间阶段的等待时间
-                await asyncio.sleep(20)
-
-            await asyncio.sleep(1)
-            self.broadcast_msg(f'{stage.value}请闭眼', tts=True)
-            await asyncio.sleep(2)
-
-        # ---------- 摄梦人结算 ----------
-        dreamer = next((u for u in self.players.values() if u.role == Role.DREAMER and u.status == PlayerStatus.ALIVE), None)
-        if dreamer:
-            dreamer.role_instance.apply_logic(self)
-
-        # ---------- 夜晚死亡结算 ----------
-        dead_this_night = []
-        for u in self.players.values():
-            if u.status == PlayerStatus.DEAD:
-                continue
-            immunity = u.skill.get('dream_immunity', False)
-            u.skill['dream_immunity'] = False
-            dream_cause = u.skill.pop('dream_forced_death', None)
-
-            if dream_cause:
-                u.status = PlayerStatus.DEAD
-                dead_this_night.append(u.nick)
-                if u.role in (Role.HUNTER, Role.WOLF_KING):
-                    u.skill['can_shoot'] = False
-                    u.send_msg('你无法开枪。')
-                u.skill.pop('dreamer_nick', None)
-                continue
-
-            if u.status == PlayerStatus.PENDING_POISON:
-                if not immunity:
-                    u.status = PlayerStatus.DEAD
-                    dead_this_night.append(u.nick)
-                    if u.role == Role.HUNTER:
-                        u.skill['can_shoot'] = False
-                else:
-                    u.status = PlayerStatus.ALIVE
-
-            elif u.status == PlayerStatus.PENDING_DEAD:
-                if immunity or u.status in (PlayerStatus.PENDING_HEAL, PlayerStatus.PENDING_GUARD):
-                    u.status = PlayerStatus.ALIVE
-                else:
-                    u.status = PlayerStatus.DEAD
-                    dead_this_night.append(u.nick)
-
-            elif u.status in (PlayerStatus.PENDING_HEAL, PlayerStatus.PENDING_GUARD):
-                u.status = PlayerStatus.ALIVE
-            else:
-                u.status = PlayerStatus.ALIVE
-
-        dreamers = [user for user in self.players.values() if user.role == Role.DREAMER]
-        if dreamers:
-            for dreamer_player in dreamers:
-                for candidate in self.players.values():
-                    if candidate.skill.get('dreamer_nick') != dreamer_player.nick:
-                        continue
-                    if dreamer_player.status == PlayerStatus.DEAD and candidate.status != PlayerStatus.DEAD:
-                        candidate.status = PlayerStatus.DEAD
-                        dead_this_night.append(candidate.nick)
-                        if candidate.role in (Role.HUNTER, Role.WOLF_KING):
-                            candidate.skill['can_shoot'] = False
-                            candidate.send_msg('你无法开枪。')
-                    candidate.skill.pop('dreamer_nick', None)
-
-        self.death_pending = dead_this_night
-        self.broadcast_msg('天亮请睁眼', tts=True)
-        await asyncio.sleep(2)
-        needs_sheriff_phase = False
-        if not self.sheriff_badge_destroyed:
-            if self.round == 1:
-                needs_sheriff_phase = True
-            elif self.skill.get('sheriff_deferred_active'):
-                needs_sheriff_phase = True
-
-        if needs_sheriff_phase:
-            self.stage = GameStage.SHERIFF
-            if self.skill.get('sheriff_deferred_active'):
-                self.broadcast_msg('继续未完成的警长竞选', tts=True)
-                self.resume_deferred_sheriff_phase()
-            else:
-                self.broadcast_msg('进行警上竞选', tts=True)
-                self.init_sheriff_phase()
-            while self.sheriff_state.get('phase') != 'done':
-                await asyncio.sleep(0.5)
-        else:
-            self.prepare_day_phase()
-
-        while not self.day_state:
-            await asyncio.sleep(0.2)
-        while self.day_state.get('phase') != 'done':
-            await asyncio.sleep(0.5)
+        return await self._ensure_game_config().night_logic()
 
     def _has_active_role(self, roles: List[Role]) -> bool:
-        alive_statuses = {PlayerStatus.ALIVE, PlayerStatus.PENDING_GUARD, PlayerStatus.PENDING_HEAL}
-        return any(
-            user.role in roles and user.status in alive_statuses
-            for user in self.players.values()
-        )
+        return self._ensure_game_config().has_active_role(roles)
 
     def _has_configured_role(self, roles: List[Role]) -> bool:
-        return any(role in self.roles for role in roles) or any(
-            user.role in roles for user in self.players.values()
-        )
+        return self._ensure_game_config().has_configured_role(roles)
 
     def _ensure_half_blood_choices(self):
-        for user in self.players.values():
-            if user.role != Role.HALF_BLOOD or user.status == PlayerStatus.DEAD:
-                continue
-            role_inst = getattr(user, 'role_instance', None)
-            if role_inst and hasattr(role_inst, 'ensure_choice'):
-                try:
-                    role_inst.ensure_choice()
-                except Exception:
-                    logger.exception('混血儿认亲结算失败')
+        self._ensure_game_config().ensure_half_blood_choices()
 
     async def wait_for_player(self):
-        timeout = 20
-        start = asyncio.get_event_loop().time()
-        while self.waiting:
-            if asyncio.get_event_loop().time() - start > timeout:
-                self.waiting = False
-                self.broadcast_msg("行动超时，系统自动跳过", tts=True)
-                break
-            await asyncio.sleep(0.1)
-        
-        # 阶段结束后，刷新所有玩家的界面（取消操作窗口）
-        for user in self.players.values():
-            try:
-                # 取消倒计时任务
-                task = user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
-            except Exception:
-                pass
-        # 通过日志控制项通知所有会话关闭输入窗口
-        self.log.append((None, LogCtrl.RemoveInput))
+        return await self._ensure_game_config().wait_for_player()
 
     async def check_game_end(self):
-        alive = self.list_alive_players()
-        wolves = [u for u in alive if u.role in WOLF_TEAM_ROLES]
-        goods = [u for u in alive if u.role not in WOLF_TEAM_ROLES]
-        half_bloods = [u for u in goods if u.role == Role.HALF_BLOOD]
-        for hb in half_bloods:
-            if hb.skill.get('half_blood_camp', 'good') == 'wolf':
-                goods = [g for g in goods if g.nick != hb.nick]
-                wolves.append(hb)
-        if not wolves:
-            await self.end_game("好人阵营获胜！狼人全部出局")
-        elif len(wolves) >= len(goods):
-            await self.end_game("狼人阵营获胜！好人被屠光")
+        return await self._ensure_game_config().check_game_end()
 
     async def end_game(self, reason: str):
-        if self.game_over: return
-        self.game_over = True
-        self.started = False
-        self.stage = None
-        self.broadcast_msg(f"游戏结束，{reason}。", tts=True)
-        await asyncio.sleep(2)
-        for nick, user in self.players.items():
-            self.broadcast_msg(f"{nick}：{user.role_instance.name if user.role_instance else '无'}", tts=True)
-            user.role = user.role_instance = user.status = None
-            user.skill.clear()
-        logger.info(f"房间 {self.id} 游戏结束：{reason}")
+        return await self._ensure_game_config().end_game(reason)
 
     def list_alive_players(self) -> List[User]:
         return [u for u in self.players.values() if u.status == PlayerStatus.ALIVE]

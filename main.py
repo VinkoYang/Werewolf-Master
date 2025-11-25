@@ -14,13 +14,15 @@ from pywebio.platform.tornado import ioloop as get_pywebio_ioloop
 from pywebio.input import *
 from pywebio.output import *
 from pywebio.output import use_scope
-from pywebio.session import defer_call, get_current_task_id, get_current_session, set_env
+from pywebio.session import defer_call, get_current_task_id, get_current_session, set_env, run_js
 
 
 from enums import WitchRule, GuardRule, SheriffBombRule, Role, GameStage, PlayerStatus
+from models.lobby import prompt_room_creation, prompt_room_join, wait_lobby_selection
 from models.room import Room
 from models.user import User
-from utils import add_cancel_button, get_interface_ip
+from models.system import Global
+from utils import add_cancel_button, get_interface_ip, make_scope_name
 
 # ==================== 接入外网：pyngrok ====================
 from pyngrok import ngrok
@@ -31,15 +33,6 @@ basicConfig(stream=sys.stdout,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = getLogger('Wolf')
 logger.setLevel('DEBUG')
-
-
-def make_scope_name(prefix: str, nick: str) -> str:
-    """Sanitize nicknames for PyWebIO scope names."""
-    suffix = re.sub(r'[^0-9A-Za-z_-]', '_', nick)
-    if not suffix:
-        suffix = 'player'
-    return f'{prefix}_{suffix}'
-
 
 def build_page_title(room: Room, user: User) -> str:
     room_id = room.id if room and room.id is not None else '未分配'
@@ -209,8 +202,8 @@ def build_js_countdown_html(label: str, seconds: int, key: str) -> str:
 
 
 async def main():
-    set_env(title="Moon Verdict 狼人杀法官助手")
-    put_markdown("## 狼人杀法官")
+    set_env(title="-Moon Verdict 月光审判- 狼人杀法官助手")
+    put_markdown("## -Moon Verdict 月光审判- 狼人杀AI法官")
     current_user = User.alloc(
         await input('请输入你的昵称',
                     required=True,
@@ -231,68 +224,30 @@ async def main():
         current_user.skill.pop('global_display_idle', None)
 
     put_text(f'你好，{current_user.nick}')
-    data = await input_group(
-        '大厅', inputs=[actions(name='cmd', buttons=['创建房间', '加入房间'])]
-    )
+    lobby_scope = make_scope_name('lobby_menu', current_user.nick)
+    room: Optional[Room] = None
+    while room is None:
+        cmd = await wait_lobby_selection(lobby_scope)
 
-    if data['cmd'] == '创建房间':
-        # 先显示板子预设选择
-        preset_data = await input_group('板子预设', inputs=[
-            actions(
-                name='preset',
-                buttons=['3人测试板子', '预女猎守1狼6人测试', '预女猎守2狼7人测试', '自定义配置'],
-                help_text='选择预设或自定义'
-            )
-        ])
-        
-        if preset_data['preset'] == '3人测试板子':
-            # 使用3人测试板子预设：1普通狼人，1平民，1预言家
-            room_config = {
-                'wolf_num': 1,
-                'god_wolf': [],
-                'citizen_num': 1,
-                'god_citizen': ['预言家'],
-                'witch_rule': '仅第一夜可自救',
-                'guard_rule': '同时被守被救时，对象死亡',
-                'sheriff_bomb_rule': '双爆吞警徽'
-            }
-        elif preset_data['preset'] == '预女猎守1狼6人测试':
-            room_config = {
-                'wolf_num': 1,
-                'god_wolf': [],
-                'citizen_num': 1,
-                'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
-                'witch_rule': '仅第一夜可自救',
-                'guard_rule': '同时被守被救时，对象死亡',
-                'sheriff_bomb_rule': '双爆吞警徽'
-            }
-        elif preset_data['preset'] == '预女猎守2狼7人测试':
-            room_config = {
-                'wolf_num': 2,
-                'god_wolf': [],
-                'citizen_num': 1,
-                'god_citizen': ['预言家', '女巫', '守卫', '猎人'],
-                'witch_rule': '仅第一夜可自救',
-                'guard_rule': '同时被守被救时，对象死亡',
-                'sheriff_bomb_rule': '双爆吞警徽'
-            }
+        if cmd == '创建房间':
+            room_config = await prompt_room_creation()
+            if not room_config:
+                continue
+            room = Room.alloc(room_config)
+        elif cmd == '加入房间':
+            room_id = await prompt_room_join(current_user)
+            if not room_id:
+                continue
+            room = Room.get(room_id)
+            if not room:
+                toast('房间不存在或已关闭', color='warn')
+                room = None
+                continue
         else:
-            # 自定义配置
-            room_config = await input_group('房间设置', inputs=[
-                input(name='wolf_num', label='普通狼数', type=NUMBER, value='3'),
-                checkbox(name='god_wolf', label='特殊狼', inline=True, options=Role.as_god_wolf_options()),
-                input(name='citizen_num', label='普通村民数', type=NUMBER, value='4'),
-                checkbox(name='god_citizen', label='特殊村民', inline=True,
-                         options=Role.as_god_citizen_options()),
-                select(name='witch_rule', label='女巫解药规则', options=WitchRule.as_options()),
-                select(name='guard_rule', label='守卫规则', options=GuardRule.as_options()),
-                select(name='sheriff_bomb_rule', label='自曝警徽规则', options=SheriffBombRule.as_options(), value=SheriffBombRule.DOUBLE_LOSS.value),
-            ])
-        room = Room.alloc(room_config)
-    elif data['cmd'] == '加入房间':
-        room = Room.get(await input('房间号', type=TEXT, validate=Room.validate_room_join))
-    else:
-        raise NotImplementedError
+            continue
+
+    with use_scope(lobby_scope, clear=True):
+        pass
 
     # 增大消息显示区域高度，提供更充足的聊天/系统信息显示空间
     put_scrollable(current_user.game_msg, height=600, keep_bottom=True)
