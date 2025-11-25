@@ -1,7 +1,6 @@
 # roles/wolf.py
 from typing import List, Optional
 from pywebio.input import actions
-from utils import add_cancel_button
 from .base import RoleBase, player_action
 from enums import GameStage, PlayerStatus, Role
 
@@ -11,6 +10,7 @@ class Wolf(RoleBase):
     name = '狼人'
     team = '狼人阵营'
     can_act_at_night = True
+    needs_global_confirm = False
 
     def input_handlers(self):
         return {'wolf_team_op': self.kill_player}
@@ -34,9 +34,6 @@ class Wolf(RoleBase):
         # 收集当前的狼人投票信息，用于标记已被选择的目标
         wolf_votes = room.skill.get('wolf_votes', {})
         
-        # 获取当前玩家的临时选择
-        current_choice = self.user.skill.get('wolf_choice')
-
         # 构建选择按钮：使用 dict 格式以支持 disabled/color
         buttons = []
         for u in players:
@@ -46,8 +43,7 @@ class Wolf(RoleBase):
             if disabled:
                 btn['disabled'] = True
                 btn['color'] = 'secondary'
-            # 如果是当前玩家的临时选择，标记为黄色（warning）
-            elif u.nick == current_choice:
+            elif self.user.nick in wolf_votes.get(u.nick, []):
                 btn['color'] = 'warning'
             # 如果该玩家已被其他狼人确认选择，标记为危险色
             elif u.nick in wolf_votes:
@@ -77,63 +73,22 @@ class Wolf(RoleBase):
     @player_action
     def kill_player(self, nick: str) -> Optional[str]:
         if nick == '放弃':
-            self._abstain()
-            return 'PENDING'
-
-        room = self.user.room
+            return self._abstain()
 
         # 解析传入的 "seat. nick" 格式，取出昵称
         target_nick = nick.split('.', 1)[-1].strip()
-
-        # 只暂存选择，等待确认
-        prev_choice = self.user.skill.get('wolf_choice')
-        if prev_choice:
-            votes_map = room.skill.setdefault('wolf_votes', {})
-            if prev_choice in votes_map and self.user.nick in votes_map[prev_choice]:
-                votes_map[prev_choice].remove(self.user.nick)
-
-        self.user.skill['wolf_choice'] = target_nick
-        return 'PENDING'
+        result = self._apply_vote(target_nick)
+        return result if result is not None else True
 
     @player_action
     def confirm(self) -> Optional[str]:
-        # 将暂存的选择登记为正式投票
-        room = self.user.room
         target_nick = self.user.skill.get('wolf_choice', None)
-        
-        # 如果玩家选择了"放弃"或没有选择
+
         if not target_nick:
-            # 标记为已行动（放弃）
-            self.user.send_msg('你今夜放弃选择击杀目标')
-            self.user.skill['wolf_action_done'] = True
-            # 广播给所有狼人：某玩家选择放弃
-            for u in room.players.values():
-                if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE:
-                    room.send_msg(f"{self.user.seat}号玩家选择放弃", nick=u.nick)
-            # 检查是否所有狼人都已行动
-            self._check_all_wolves_acted()
-            return 'PENDING'  # 不立即结束等待
-        
-        # 登记投票
-        votes_map = room.skill.setdefault('wolf_votes', {})
-        votes_map.setdefault(target_nick, [])
-        if self.user.nick not in votes_map[target_nick]:
-            votes_map[target_nick].append(self.user.nick)
-        
-        # 清除临时选择
-        self.user.skill.pop('wolf_choice', None)
-        self.user.skill['wolf_action_done'] = True
-        
-        # 广播给所有狼人：某玩家选择击杀某玩家
-        target_user = room.players.get(target_nick)
-        target_seat = target_user.seat if target_user else '?'
-        for u in room.players.values():
-            if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE:
-                room.send_msg(f"{self.user.seat}号玩家选择击杀{target_seat}号玩家", nick=u.nick)
-        
-        # 检查是否所有狼人都已行动
-        self._check_all_wolves_acted()
-        return 'PENDING'  # 不立即结束等待，让其他狼人继续选择
+            return self._abstain()
+
+        result = self._apply_vote(target_nick)
+        return result if result is not None else True
 
     def _abstain(self):
         room = self.user.room
@@ -147,7 +102,11 @@ class Wolf(RoleBase):
                         votes_map.pop(target)
         self.user.skill.pop('wolf_choice', None)
         self.user.skill['wolf_action_done'] = True
+        for u in room.players.values():
+            if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE:
+                room.send_msg(f"{self.user.seat}号玩家选择放弃本夜击杀", nick=u.nick)
         self._check_all_wolves_acted()
+        return True
     
     def _check_all_wolves_acted(self):
         """检查是否所有狼人都已行动，如果是则结束等待"""
@@ -165,5 +124,35 @@ class Wolf(RoleBase):
 
     @player_action
     def skip(self):
-        self._abstain()
-        return 'PENDING'
+        return self._abstain()
+
+    def _apply_vote(self, target_nick: str) -> Optional[str]:
+        room = self.user.room
+        target_user = room.players.get(target_nick)
+        if not target_user:
+            return '查无此人'
+        if target_user.status == PlayerStatus.DEAD:
+            return '目标已死亡'
+
+        votes_map = room.skill.setdefault('wolf_votes', {})
+        # 移除此前的投票以避免重复计数
+        for voted_target, voters in list(votes_map.items()):
+            if self.user.nick in voters:
+                voters.remove(self.user.nick)
+                if not voters:
+                    votes_map.pop(voted_target)
+
+        votes_map.setdefault(target_nick, [])
+        if self.user.nick not in votes_map[target_nick]:
+            votes_map[target_nick].append(self.user.nick)
+
+        self.user.skill['wolf_action_done'] = True
+        self.user.skill.pop('wolf_choice', None)
+
+        target_seat = target_user.seat if target_user else '?'
+        for u in room.players.values():
+            if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE:
+                room.send_msg(f"{self.user.seat}号玩家选择击杀{target_seat}号玩家", nick=u.nick)
+
+        self._check_all_wolves_acted()
+        return None

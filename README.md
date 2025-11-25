@@ -1,27 +1,27 @@
 # Wolf
 狼人杀面杀法官系统
 ## 链接
-- [狼人杀规则](rules.md)
-- [狼人杀角色介绍](roles.md)
-- [狼人杀特殊版型介绍](configuration.md)
+- [狼人杀规则](doc/rules.md)
+- [狼人杀角色介绍](doc/roles.md)
+- [狼人杀特殊版型介绍](doc/configuration.md)
 
 Preview
 --
-![目前版型](doc/lobby.png)
+![目前版型](pics/lobby.png)
 
-![房间设置界面](doc/room_setting.png)
+![房间设置界面](pics/room_setting.png)
 
 狼人
-![狼人角色UI界面](doc/wolf_UI.png)
+![狼人角色UI界面](pics/wolf_UI.png)
 
 女巫
-![女巫角色UI界面](doc/witch_UI.png)
+![女巫角色UI界面](pics/witch_UI.png)
 
 守卫
-![守卫角色UI界面](doc/guard_UI.png)
+![守卫角色UI界面](pics/guard_UI.png)
 
 猎人
-![猎人角色UI界面](doc/hunter_UI.png)
+![猎人角色UI界面](pics/hunter_UI.png)
 如何使用
 --
 0. 安装 Python 3.7 版本及以上
@@ -41,7 +41,7 @@ python main.py
 ## 身份介绍
 --
 
-- [狼人杀角色介绍](roles.md)
+- [狼人杀角色介绍](doc/roles.md)
 
 ## 待开发和优化
 1. TTS 目前仅支持 macOS，windows，需要支持更多的平台
@@ -344,47 +344,47 @@ hunter.py：将开枪入口适配为支持确认（占位式实现，开枪目�
 5. seer.py：验证预言家仍正常渲染标准按钮，且在移除 put_html 后不再被阻塞。
 
 ## 2025-11-22 补丁更新
-1. main.py now appends统一的 刷新 按钮到每次 input_group，并在点按后立刻取消倒计时与输入，重新渲染当前阶段，不会误触发其他操作。
-2. room.py 引入 _has_active_role()，把被守/被救状态视为仍可行动；夜间角色轮巡改用该判定，确保猎人即使被守卫保护时也会进入“猎人请出现”阶段，能够完成夜晚确认。
-3. Fixed the host-action handler in main.py by properly indenting the '公布昨夜信息' branch so the awaited room.publish_night_info() call sits inside the action check. Re-ran python -m py_compile main.py and python -m py_compile models/room.py; both compile successfully now. Next step could be a quick manual run to ensure the refreshed UI flow behaves as expected.
-
-## 2025-11-22 补丁更新2
-1. Added a protective try/except around the main loop sleep in main.py so page refreshes cancel/ignore the pending await instead of crashing sessions.
-2. Enhanced sheriff signup handling in room.py: zero or all signups now trigger police-badge loss, and a lone signup auto-elects that player without speeches or votes.
-3. Adjusted guard.py so guards still choose targets during守救冲突, but no longer receive the conflict-specific private hint (they just see the usual “你守护了…” message).
-
-## 2025-11-23 补丁更新
-1. room.py
+## 2025-11-23 更新补丁3
+- 增加 doc/rules.md 介绍游戏规则
+- 增加 doc/roles.md 介绍角色
+- Fixed the host-action handler in main.py by properly indenting the '公布昨夜信息' branch so the awaited room.publish_night_info() call sits inside the action check。已使用 `python -m py_compile` 验证 main.py 与 models/room.py 编译通过。
+- guard.py：去掉了“守卫无法防御毒药”的早退。现在守卫即便选择了当晚被女巫毒的玩家，操作也会正常记录并提示已守护，但不会改变该玩家的毒杀结局（仍在结算时死亡），满足“可以守但挡不住毒”的要求。
+- witch.py：给确认毒药逻辑引入 Role 判断，一旦目标是猎人就立即把 target.skill['can_shoot'] 置为 False。这样猎人在夜里收到的状态提醒会明确显示“不能开枪”，且遗言阶段也无法进入开枪模式。
+## 2025-11-23 更新补丁5
+- Added a new bullet under README.md’s 身份介绍 to describe白痴：日间翻牌免死、必须先处理警徽、后续只能发言不能投票，确保主 README 也反映了最新机制。
+- Updated doc/rules.md in three places: expanded警徽规则、规则盲点第 2 条，以及身份规则里的白痴条目，统一强调翻牌后必须立即移交或撕毁警徽且永久失去投票权。
+- Updated hunter.py so任何被动带走公告现在统一为“Public: X号玩家被带走”，并改用 room.handle_last_word_skill_kill() 记录击杀结果，保证被带走玩家自动进入后续流程。
+- 重构 room.py 的日间放逐流程：start_execution_sequence() 先建立 day_deaths 队列并进入仅技能阶段，handle_last_word_skill_kill() 会把猎人/狼王等被动击杀的目标追加到同一队列。待所有技能结算完成后，_start_day_last_words_speech() 依据该名单开启遗言阶段，遗言顺序即为死亡顺序；阶段收尾时统一把名单上的玩家结算为死亡。
+- 扩展 start_last_words() 以支持“只遗言不技能”的模式，并新增 _prompt_current_last_word_speech() helper，让白天技能阶段与遗言阶段完全分离但依旧沿用原有 UI 逻辑。
+- Added sheriff-eligibility helpers in room.py so players marked for death overnight still count as contestants. All sheriff-specific flows (record_sheriff_choice, candidate lists, PK speeches) now treat “night pending” players as available until昨夜信息公布完毕. main.py uses the new Room.can_participate_in_sheriff() to render the 上警/退水/投票控件 even if该玩家已在夜里死亡但尚未公布。
+- Ensured that if such a pending player当选警长而在公布时阵亡，现有“技能 → 警徽移交 → 遗言”流水线会触发，因为他们被包含在 follow-up 队列里（逻辑已具备，无需额外改动）。
+- Fixed猎人开枪后的流程：hunter.py 现在在确认击杀后调用 room.advance_last_words_progress()，避免房间停留在“被带走”广播。被带走的白痴等玩家会获得正常的被动技能/遗言面板。也顺带确保白痴在日间被动阶段会继续进入移交/遗言流程。
     当 没有警长存活 时，prompt_sheriff_order() 会随机选择一名存活玩家作为锚点，并随机选择 顺序/逆序，从该锚点开始发言。
-    当 有警长存活 时，房间切换到 GameStage.SHERIFF，等待警长选择。如果警长超时，则回退到同样的随机顺序逻辑。
-    新增辅助函数：
-        _build_queue_from_player()：根据指定玩家构建发言队列。
+## 2025-11-24 更新补丁3
+- doc/roles.md：在摄梦人条目中补充“不能对自己发动技能”的说明，使规则文档与最新客户端行为一致。
+- doc/roles.md：第三方阵营章节更新混血儿条目，记录“第一夜最先行动、不可选自己、预言家永远验好”的新机制。
+- README 与 doc/roles.md：补充白狼王技能描述与最新限制条件，提醒只能在发言/退水阶段现形，且自曝前需预先在面板选择击杀对象。
         _random_queue_without_sheriff()：在无警长情况下生成随机队列。
         force_sheriff_order_random()：强制随机选择顺序。
         set_sheriff_order() 增加 auto 标志，用于区分 手动选择 和 系统自动选择。
-
 2. main.py
-警长选择顺序的提示使用 专用 20 秒倒计时，且计时仅针对警长。
-倒计时结束后自动调用 force_sheriff_order_random()。
-白天状态跟踪确保：
-    只有警长能看到 顺序/逆序按钮。
-    不再出现额外的“确认”按钮。
-
+    警长选择顺序的提示使用 专用 20 秒倒计时，且计时仅针对警长。
+    倒计时结束后自动调用 force_sheriff_order_random()。
+    白天状态跟踪确保：
+        只有警长能看到 顺序/逆序按钮。
+        不再出现额外的“确认”按钮。
 3. main.py
-主循环顶部的 sleep 现在会吞掉刷新相关的 RuntimeError 和 CancelledError，避免在点击“刷新操作窗口”时（尤其主持人发言期间）导致 PyWebIO 协程崩溃。
-
+    。
 4. room.py
-警长选择顺序流程广播优化后的提示：
-    “放逐发言阶段，请警长选择发言顺序”
-    后续：“警长选择顺序/逆序发言，X请发言”
-去掉冗余的初始发言公告。
-无警长或超时情况仍有合理的自动选择提示。
-随机顺序逻辑和倒计时触发的回退使用一致的文本格式，保持统一。
-
+    警长选择顺序流程广播优化后的提示：
+        “放逐发言阶段，请警长选择发言顺序”
+        后续：“警长选择顺序/逆序发言，X请发言”
+    去掉冗余的初始发言公告。
+    无警长或超时情况仍有合理的自动选择提示。
+    随机顺序逻辑和倒计时触发的回退使用一致的文本格式，保持统一。
 5. 狼队空刀逻辑
     给狼人面板新增可识别的 放弃 按钮，并在 wolf.py 中把它当成一次明确的弃刀操作处理，确保记录被清理且等待状态只在所有狼人决定后才结束。
     新增 _abstain 与覆盖 skip，使倒计时触发的自动跳过同样计入已行动，且只有当全部狼人行动或放弃后才落刀；若最终无投票则夜晚自动判定为空刀。
-
 6. 更新遗言顺序
     Updated models/room.py::start_execution_sequence so if the executed player is a hunter who successfully shoots someone, the遗言队列 includes both the hunter and the victim (hunter first). That way the sequence after the broadcast becomes: hunter skill announcement → hunter发遗言 →被带走的玩家发遗言.
 
@@ -460,12 +460,6 @@ sheriff_deferred_active/payload/bomb_count: 推迟竞选跟踪
 日志系统集成自曝、移交等关键事件广播
 退水倒计时与主循环异步协调，不阻塞其他玩家
 
-## 2025-11-23 更新补丁3
-- 增加rules.md 介绍游戏规则
-- 增加roles.md 介绍角色
-- guard.py: 去掉了“守卫无法防御毒药”的早退。现在守卫即便选择了当晚被女巫毒的玩家，操作也会正常记录并提示已守护，但不会改变该玩家的毒杀结局（仍在结算时死亡），满足“可以守但挡不住毒”的要求。
-- witch.py: 给确认毒药逻辑引入 Role 判断，一旦目标是猎人就立即把 target.skill['can_shoot'] 置为 False。这样猎人在夜里收到的状态提醒会明确显示“不能开枪”，且遗言阶段也无法进入开枪模式。
-
 ## 2025-11-23 更新补丁4
 room.py：放宽狼人自曝条件，只要处于警长竞选发言或 PK 发言阶段且仍存活的狼人都能看到“自曝”按钮，不再限制为当前发言人。
 room.py：保留先前实现的 10 秒警长投票倒计时（无新增修改，逻辑仍是到时未投票自动记弃票并立即结算）。
@@ -473,16 +467,6 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 已更新 witch.py：
     当女巫已经完成毒/解药动作（acted_this_stage=True）时，skip() 会立即返回，不会再发送“今晚，你没有操作”。
     若女巫只是选了目标但尚未确认，skip() 会清除暂存目标；只有在确实没有任何操作并选择放弃或超时时，才会发送“今晚，你没有操作”。
-
-## 2025-11-23 更新补丁5
-- Added a new bullet under README.md’s 身份介绍 to describe白痴：日间翻牌免死、必须先处理警徽、后续只能发言不能投票，确保主 README 也反映了最新机制。
-- Updated rules.md in three places: expanded警徽规则、规则盲点第 2 条，以及身份规则里的白痴条目，统一强调翻牌后必须立即移交或撕毁警徽且永久失去投票权。
-- Updated hunter.py so任何被动带走公告现在统一为“Public: X号玩家被带走”，并改用 room.handle_last_word_skill_kill() 记录击杀结果，保证被带走玩家自动进入后续流程。
-- 重构 room.py 的日间放逐流程：start_execution_sequence() 先建立 day_deaths 队列并进入仅技能阶段，handle_last_word_skill_kill() 会把猎人/狼王等被动击杀的目标追加到同一队列。待所有技能结算完成后，_start_day_last_words_speech() 依据该名单开启遗言阶段，遗言顺序即为死亡顺序；阶段收尾时统一把名单上的玩家结算为死亡。
-- 扩展 start_last_words() 以支持“只遗言不技能”的模式，并新增 _prompt_current_last_word_speech() helper，让白天技能阶段与遗言阶段完全分离但依旧沿用原有 UI 逻辑。
-- Added sheriff-eligibility helpers in room.py so players marked for death overnight still count as contestants. All sheriff-specific flows (record_sheriff_choice, candidate lists, PK speeches) now treat “night pending” players as available until昨夜信息公布完毕. main.py uses the new Room.can_participate_in_sheriff() to render the 上警/退水/投票控件 even if该玩家已在夜里死亡但尚未公布。
-- Ensured that if such a pending player当选警长而在公布时阵亡，现有“技能 → 警徽移交 → 遗言”流水线会触发，因为他们被包含在 follow-up 队列里（逻辑已具备，无需额外改动）。
-- Fixed猎人开枪后的流程：hunter.py 现在在确认击杀后调用 room.advance_last_words_progress()，避免房间停留在“被带走”广播。被带走的白痴等玩家会获得正常的被动技能/遗言面板。也顺带确保白痴在日间被动阶段会继续进入移交/遗言流程。
 
 ## 2025-11-23 更新补丁6
 - Added build_js_countdown_html() plus helper utilities in main.py that render the global timer as an inline JavaScript widget. Each time the stage transitions (wolves act, sheriff vote,遗言、警徽、放逐投票等), the server now injects a DOM block with a self-contained setInterval that animates the countdown entirely on the browser side—no more reliance on server-side sleep loops.
@@ -563,3 +547,7 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 3. 修复警长选择顺序缺失 `_build_directional_queue()` 报错的问题，并确保无警长或超时时会自动生成完整的顺序/逆序队列。
 4. UX 小修复：九尾妖狐每夜首次睁眼会收到私聊提示尾巴数，并在确认后清理提示；狼人阶段使用 `wolf_action_done` 标记避免提前结束等待。
 5. 如需深入了解新的混入结构以及测试检查清单，请参考 [`doc/runtime-refactor.md`](doc/runtime-refactor.md)。
+
+## 2025-11-25 README 资源同步
+- README 顶部的文档链接与预览截图已统一指向新的 `doc/` 与 `pics/` 目录，避免在移动文件后出现 404。
+- `# Update Notes` 去重并合并了重复条目，方便在底部快速查阅补丁历史。
