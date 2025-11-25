@@ -63,6 +63,7 @@ def get_global_countdown_context(room: Optional[Room]) -> Tuple[Optional[str], O
         GameStage.HUNTER: '猎人阶段',
         GameStage.WOLF_KING: '狼王确认',
         GameStage.DREAMER: '摄梦人阶段',
+        GameStage.NINE_TAILED_FOX: '九尾妖狐阶段',
     }
     if stage in night_labels:
         label = f"{night_labels[stage]}倒计时"

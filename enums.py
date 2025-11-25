@@ -33,6 +33,7 @@ class GameStage(Enum):
     HUNTER = '猎人'
     WOLF_KING = '狼王'
     DREAMER = '摄梦人'          # 摄梦人阶段
+    NINE_TAILED_FOX = '九尾妖狐'
     SHERIFF = '上警'           # 上警阶段
     SPEECH = '发言'            # 竞选发言阶段
     LAST_WORDS = '遗言'
@@ -56,6 +57,7 @@ class Role(PlainEnum):
     DREAMER = '摄梦人'
     IDIOT = '白痴'
     HALF_BLOOD = '混血儿'
+    NINE_TAILED_FOX = '九尾妖狐'
 
     @classmethod
     def as_god_citizen_options(cls) -> list:
@@ -98,6 +100,7 @@ class Role(PlainEnum):
             '摄梦人': cls.DREAMER,   # 新增
             '白痴': cls.IDIOT,
             '混血儿': cls.HALF_BLOOD,
+            '九尾妖狐': cls.NINE_TAILED_FOX,
         }
 
     @classmethod

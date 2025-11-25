@@ -61,8 +61,9 @@ python main.py
 - `enums.py`：集中定义枚举（角色、阶段、规则），是所有业务层的基础。
 - `models/system.py`：`Global` 负责注册/查询房间与用户；`Config` 存放系统昵称等常量。
 - `models/user.py`：封装玩家实体，管理个人状态、消息同步与角色实例（`role_instance`）。
-- `models/room.py`：房间核心逻辑，负责角色分配、昼夜循环、投票结算等。
-- `presets/game_config_base.py` & `presets/game_config_*.py`：封装夜晚/胜负流程的策略类；不同版型拥有独立脚本，互不依赖，只共享 BaseGameConfig。
+- `models/room.py`：房间核心逻辑（建房、分配角色、主持面板），昼夜循环委托给 `RoomRuntimeMixin`。
+- `models/room_runtime.py` 与 `models/runtime/`：运行时混入集合（`SheriffFlowMixin`、`DaytimeFlowMixin`、`tools.AsyncTimer` 等），负责警长竞选、白天发言/投票、徽章移交等流程，详见 [`doc/runtime-refactor.md`](doc/runtime-refactor.md)。
+- `presets/base.py`（以及兼容层 `presets/game_config_base.py`）与 `presets/game_config_*.py`：封装夜晚/胜负流程的策略类；不同版型拥有独立脚本，互不依赖，只共享 `BaseGameConfig`/`DefaultGameFlow`。
 - `presets/game_config_registry.py`：集中注册所有 game_config_* 元数据，负责版型检测与大厅预设模板输出。
 - `models/lobby.py`：大厅 UI 与房间创建/加入流程，包含预设板子、链接跳转等展示逻辑。
 - `roles/` 目录：每个角色一个文件，继承 `roles/base.py` 的 `RoleBase`，实现自身技能及 UI。
@@ -81,8 +82,8 @@ python main.py
 4. **入场与消息区**：进入房间后 `room.add_player(user)`，同步日志到每位用户的 `game_msg`，并在全局 Scope 中挂载倒计时控件。
 5. **游戏循环**：
     - 房主操作：开始游戏、公布夜晚信息、发起投票、重新配置房间等。
-    - 夜晚阶段：`Room.night_logic()` 依次驱动狼人/女巫/守卫等角色；各角色 UI 由 `role_instance.get_actions()` 返回，配合 `player_action` 装饰器保障阶段校验与确认机制；倒计时/确认逻辑由 `main.py` 调度。
-    - 白天阶段：公布夜晚事件、上警/竞选、投票放逐等均在 `room.py` 里结算，`main.py` 负责将操作按钮下发给相应玩家。
+    - 夜晚阶段：`RoomRuntimeMixin.night_logic()` 依次驱动狼人/女巫/守卫等角色；各角色 UI 由 `role_instance.get_actions()` 返回，配合 `player_action` 装饰器保障阶段校验与确认机制；倒计时/确认逻辑由 `main.py` 调度。
+    - 白天阶段：`DaytimeFlowMixin` / `SheriffFlowMixin` 负责公布夜晚事件、上警/竞选、投票放逐与徽章流程，`main.py` 仍负责将操作按钮下发给相应玩家。
 6. **胜负判定**：`room.check_game_end()` 在每轮结算后判断狼人/好人阵营是否满足结束条件，触发 `end_game()` 广播、清理状态。
 
 ## 3️⃣ 数据流与协作
@@ -544,10 +545,21 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 
 ## 2025-11-25 结构与 UI 更新
 1. **Preset 目录重组**
-    - 新增顶级 `presets/` 目录，集中存放 `game_config_base.py` 以及所有 `game_config_*.py` 版型脚本。
+    - 新增顶级 `presets/` 目录，集中存放 `base.py`（新版共享流程）以及所有 `game_config_*.py` 版型脚本，旧路径 `game_config_base.py` 仅保留兼容层。
     - 提供 `presets/__init__.py`，并让 `models/room.py`、`models/lobby.py` 统一从 `presets.*` 导入 BaseGameConfig、预设元数据与注册表，消除 `models` 与版型模块的耦合。
     - 清理 `game_config_registry.py` 中残留的补丁标记，避免在 `python main.py` 启动时因语法错误导致导入失败。
 2. **大厅“创建房间”弹窗体验**
     - 关闭按钮固定在弹窗右上角，不再占据正文布局空间。
     - Popup 根据内容自适应高度，设定 `max-height: calc(100vh - 260px)` 上限，必要时自动出现滚动条，彻底解决下方大量空白的问题。
     - 同时复用新的样式字符串，保证弹窗宽度约为 520px，在桌面端与移动端都保持一致的排版。
+3. **新增「预女猎尾」预设与九尾妖狐角色**
+    - 构建 `presets/game_config_nine_tailed_fox.py`，支持 4 狼 + 4 民 + 预女猎 + 九尾妖狐的 12 人版型，行动顺序为狼→预→女→猎→妖狐。
+    - `roles/nine_tailed_fox.py` 实现「幻尾」技能：追踪尾巴数、夜间提示、扣至 0 条时自动退场，并在 `Room` 与 `DefaultGameFlow` 中统一结算。
+    - 新 preset 在大厅按钮列表中以“预女猎尾”呈现，可与既有 12 人版型同列自助创建。
+
+## 2025-11-25 Runtime Mixins（Moonlight 分支）
+1. 新增 `models/room_runtime.RoomRuntimeMixin`，并拆分出 `models/runtime/sheriff.py`、`models/runtime/daytime.py` 与 `models/runtime/tools.py`，将上警/白天/遗言/徽章等运行时逻辑从 `room.py` 中完全抽离。
+2. `presets/base.py` 成为 `BaseGameConfig`/`DefaultGameFlow` 的权威入口，`presets/game_config_base.py` 保留为兼容层；全部预设脚本已经切换到新的导入路径。
+3. 修复警长选择顺序缺失 `_build_directional_queue()` 报错的问题，并确保无警长或超时时会自动生成完整的顺序/逆序队列。
+4. UX 小修复：九尾妖狐每夜首次睁眼会收到私聊提示尾巴数，并在确认后清理提示；狼人阶段使用 `wolf_action_done` 标记避免提前结束等待。
+5. 如需深入了解新的混入结构以及测试检查清单，请参考 [`doc/runtime-refactor.md`](doc/runtime-refactor.md)。

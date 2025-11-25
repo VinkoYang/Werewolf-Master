@@ -20,7 +20,7 @@ class Wolf(RoleBase):
         return (
             self.user.status != PlayerStatus.DEAD and
             room.stage == GameStage.WOLF and
-            not self.user.skill.get('acted_this_stage', False)
+            not self.user.skill.get('wolf_action_done', False)
         )
 
     def get_actions(self) -> List:
@@ -105,7 +105,7 @@ class Wolf(RoleBase):
         if not target_nick:
             # 标记为已行动（放弃）
             self.user.send_msg('你今夜放弃选择击杀目标')
-            self.user.skill['acted_this_stage'] = True
+            self.user.skill['wolf_action_done'] = True
             # 广播给所有狼人：某玩家选择放弃
             for u in room.players.values():
                 if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE:
@@ -122,7 +122,7 @@ class Wolf(RoleBase):
         
         # 清除临时选择
         self.user.skill.pop('wolf_choice', None)
-        self.user.skill['acted_this_stage'] = True
+        self.user.skill['wolf_action_done'] = True
         
         # 广播给所有狼人：某玩家选择击杀某玩家
         target_user = room.players.get(target_nick)
@@ -146,7 +146,7 @@ class Wolf(RoleBase):
                     if not voters:
                         votes_map.pop(target)
         self.user.skill.pop('wolf_choice', None)
-        self.user.skill['acted_this_stage'] = True
+        self.user.skill['wolf_action_done'] = True
         self._check_all_wolves_acted()
     
     def _check_all_wolves_acted(self):
@@ -159,7 +159,7 @@ class Wolf(RoleBase):
                 u for u in room.players.values()
                 if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE
             ]
-        all_acted = all(u.skill.get('acted_this_stage', False) for u in wolves)
+        all_acted = all(u.skill.get('wolf_action_done', False) for u in wolves)
         if all_acted:
             room.waiting = False
 

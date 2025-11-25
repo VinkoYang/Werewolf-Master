@@ -1,12 +1,12 @@
-"""黑狼王 - 预女猎守 版型配置。"""
+"""预女猎尾（九尾妖狐）版型配置。"""
 
 from enums import GameStage, Role
 
 from .base import DefaultGameFlow
-from .game_config_presets import PRESET_WOLF_KING_GUARD, SPECIAL_PRESET_SECTION
+from .game_config_presets import PRESET_NINE_TAILED_FOX, SPECIAL_PRESET_SECTION
 
 ROLE_LIST = [
-    Role.WOLF_KING,
+    Role.WOLF,
     Role.WOLF,
     Role.WOLF,
     Role.WOLF,
@@ -17,28 +17,27 @@ ROLE_LIST = [
     Role.SEER,
     Role.WITCH,
     Role.HUNTER,
-    Role.GUARD,
+    Role.NINE_TAILED_FOX,
 ]
 
 
-class WolfKingGuardGameConfig(DefaultGameFlow):
-    """Black wolf king guard board (wolf king acts last)."""
+class NineTailedFoxGameConfig(DefaultGameFlow):
+    """Preset featuring the 九尾妖狐 stage after猎人。"""
 
     def night_role_order(self):
         return [
-            (GameStage.GUARD, [Role.GUARD]),
             (GameStage.SEER, [Role.SEER]),
             (GameStage.WITCH, [Role.WITCH]),
             (GameStage.HUNTER, [Role.HUNTER]),
-            (GameStage.WOLF_KING, [Role.WOLF_KING]),
+            (GameStage.NINE_TAILED_FOX, [Role.NINE_TAILED_FOX]),
         ]
 
 
 PRESET_METADATA = {
-    'key': PRESET_WOLF_KING_GUARD,
-    'label': '黑狼王 - 预女猎守',
+    'key': PRESET_NINE_TAILED_FOX,
+    'label': '预女猎尾',
     'section': SPECIAL_PRESET_SECTION,
-    'button_color': 'danger',
+    'button_color': 'success',
     'roles': ROLE_LIST,
-    'config_cls': WolfKingGuardGameConfig,
+    'config_cls': NineTailedFoxGameConfig,
 }

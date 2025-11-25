@@ -88,8 +88,12 @@ GAME_RESOURCE_LINKS = [
 
 GUIDE_LINKS = [
     ('新手玩家狼人杀指南', 'https://www.langrensha.net/strategy/2024021801.html'),
+    ('狼人杀发言常用术语','https://zh.wikiversity.org/zh-hans/%E7%8B%BC%E4%BA%BA%E6%AE%BA/%E7%99%BC%E8%A8%80%E5%B8%B8%E7%94%A8%E8%A1%93%E8%AA%9E'),
+    ('狼人杀手势大全','https://zhuanlan.zhihu.com/p/408899488'),
+    ('全网最全狼人杀手势[视频]', 'https://www.bilibili.com/video/BV17PdSYSEmA/?spm_id_from=333.788.recommend_more_video.5&vd_source=6d7b9125c1b0246ab38a0f2e83833e06'),
     ('玩狼人杀经常站错边怎么办？', 'https://www.langrensha.net/strategy/2024030101.html'),
     ('三个关键步骤提升你的狼人杀水平', 'https://www.langrensha.net/strategy/'),
+    ('狼人杀贴脸发言是什么意思', 'https://www.langrensha.net/strategy/2021111601.html'),
 ]
 
 DEV_LINKS = [
