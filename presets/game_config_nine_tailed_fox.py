@@ -2,7 +2,7 @@
 
 from enums import GameStage, Role
 
-from .game_config_base import DefaultGameFlow
+from .base import DefaultGameFlow
 from .game_config_presets import PRESET_NINE_TAILED_FOX, SPECIAL_PRESET_SECTION
 
 ROLE_LIST = [

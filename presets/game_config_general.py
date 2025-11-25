@@ -1,6 +1,6 @@
 """General game configuration entry point."""
 
-from .game_config_base import DefaultGameFlow
+from .base import DefaultGameFlow
 
 
 class GeneralGameConfig(DefaultGameFlow):

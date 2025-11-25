@@ -44,6 +44,9 @@ class NineTailedFox(RoleBase):
         # 预览阶段需要包含即将死亡的单位
         self.refresh_tail_state(include_pending=True, register_death=False)
         tails = self.user.skill.get('tails_remaining', 9)
+        if not self.user.skill.get('fox_tail_notified'):
+            self.user.send_msg(f'🌙 九尾妖狐睁眼，本轮尾巴数：{tails}/9')
+            self.user.skill['fox_tail_notified'] = True
         help_text = f"当前尾巴数：{tails}/9。尾巴耗尽会立即死亡。"
         button_color = 'danger' if tails <= 3 else 'primary'
         return [
@@ -57,6 +60,7 @@ class NineTailedFox(RoleBase):
     @player_action
     def acknowledge(self, _value: str):
         self.user.skill['acted_this_stage'] = True
+        self.user.skill.pop('fox_tail_notified', None)
         return True
 
     def refresh_tail_state(self, *, include_pending: bool = False, register_death: bool = True):

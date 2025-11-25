@@ -7,7 +7,7 @@ from typing import Dict, List, Sequence, Tuple, Type
 
 from enums import Role
 
-from .game_config_base import BaseGameConfig
+from .base import BaseGameConfig
 from .game_config_general import GeneralGameConfig
 from .game_config_presets import DEFAULT_ROOM_RULES
 from .game_config_12p_std import PRESET_METADATA as STD_METADATA

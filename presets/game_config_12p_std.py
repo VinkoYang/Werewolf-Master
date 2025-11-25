@@ -2,7 +2,7 @@
 
 from enums import Role
 
-from .game_config_base import DefaultGameFlow
+from .base import DefaultGameFlow
 from .game_config_presets import PRESET_STANDARD_12, SPECIAL_PRESET_SECTION
 
 
