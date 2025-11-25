@@ -50,106 +50,50 @@ python main.py
 - 验证警徽移交后新警长权限立即生效
 - 检查自曝遗言阶段是否正确触发技能（猎人/狼王）
 
-
 --
-## 程序说明
-这个程序是一个基于PyWebIO的狼人杀在线游戏系统，包含多个Python脚本，每个脚本负责特定功能
-### 1. 整体程序架构
-这是一个异步Web应用，使用PyWebIO处理用户输入/输出，asyncio管理并发。核心是多人游戏房间（Room），每个房间管理玩家（User）和游戏状态。程序模拟狼人杀规则，包括角色（狼人、神职等）、夜晚行动（刀人、查验等）和白天投票。
 
-enums.py：定义常量和枚举（如角色Role、游戏阶段GameStage）。这是基础层，被其他脚本导入使用，不直接执行逻辑。
-system.py：管理全局状态（如用户和房间的字典）。它是数据存储层，支持房间/用户的注册和获取。
-user.py：定义玩家类（User），处理玩家个人操作（如狼人刀人、女巫用药）和消息同步。User实例依赖Room实例。
-room.py：定义房间类（Room），核心游戏逻辑在这里，包括角色分配、夜晚循环、死亡结算。Room实例管理多个User实例。
-main.py：程序入口，处理用户交互（如创建/加入房间、按钮输入）。它整合所有模块，启动服务器和游戏循环。
+# 程序说明
+本项目是一个基于 PyWebIO 的异步狼人杀法官系统，依托 asyncio 驱动协程，分层清晰，便于扩展角色或 UI。
 
-程序的层次：enums（常量） → system（全局管理） → user/room（核心模型） → main（交互入口）。
+## 1️⃣ 模块分层（2025-11-25 梳理）
+- `enums.py`：集中定义枚举（角色、阶段、规则），是所有业务层的基础。
+- `models/system.py`：`Global` 负责注册/查询房间与用户；`Config` 存放系统昵称等常量。
+- `models/user.py`：封装玩家实体，管理个人状态、消息同步与角色实例（`role_instance`）。
+- `models/room.py`：房间核心逻辑，负责角色分配、昼夜循环、投票结算等。
+- `models/lobby.py`：大厅 UI 与房间创建/加入流程，包含预设板子、链接跳转等展示逻辑。
+- `roles/` 目录：每个角色一个文件，继承 `roles/base.py` 的 `RoleBase`，实现自身技能及 UI。
+- `utils.py`：工具函数（随机数、语音播报、网络信息、Scope 命名等），提供跨模块公用能力。
+- `main.py`：入口协程，会话生命周期管理、大厅指令分发、房主/玩家输入调度。
 
-### 2. 脚本间关系
-#### enums.py：被几乎所有脚本导入，提供枚举定义。
-main.py 导入：用于房间配置（如WitchRule）和游戏阶段检查。
-room.py 导入：用于角色池（roles_pool）、阶段（stage）和状态（status）。
-user.py 导入：用于玩家角色（role）和技能（skill）。
-system.py 不直接导入enums（但间接通过room/user使用）。
+模块间依赖链：`enums` → `system` → `room`/`user` → `roles` → `main`，而 `models/lobby` 与 `utils` 为跨层共享组件。
 
-#### system.py：定义Global类（管理users和rooms字典）和Config（系统昵称）。
-room.py 导入：使用Global.reg_room()注册房间、Global.get_room()获取房间。
-user.py 导入：使用Global.users注册/注销用户。
-main.py 导入：但不直接使用Global（通过Room/User间接）。
+## 2️⃣ 系统运行逻辑
+1. **启动阶段**：`python main.py` 会配置 PyWebIO 环境、可选地通过 ngrok 暴露端口，并启动 `start_server`。
+2. **用户接入**：玩家输入昵称 → `User.alloc()` 注册 → `defer_call` 保障断线清理。
+3. **大厅流程**：
+    - `models/lobby.wait_lobby_selection()` 渲染大厅卡片、资料链接。
+    - 选择“创建房间”→ `prompt_room_creation()`（支持预设/自定义板子）。
+    - 选择“加入房间”→ `prompt_room_join()`（输房号或快速加入按钮，实时刷新房间列表）。
+4. **入场与消息区**：进入房间后 `room.add_player(user)`，同步日志到每位用户的 `game_msg`，并在全局 Scope 中挂载倒计时控件。
+5. **游戏循环**：
+    - 房主操作：开始游戏、公布夜晚信息、发起投票、重新配置房间等。
+    - 夜晚阶段：`Room.night_logic()` 依次驱动狼人/女巫/守卫等角色；各角色 UI 由 `role_instance.get_actions()` 返回，配合 `player_action` 装饰器保障阶段校验与确认机制；倒计时/确认逻辑由 `main.py` 调度。
+    - 白天阶段：公布夜晚事件、上警/竞选、投票放逐等均在 `room.py` 里结算，`main.py` 负责将操作按钮下发给相应玩家。
+6. **胜负判定**：`room.check_game_end()` 在每轮结算后判断狼人/好人阵营是否满足结束条件，触发 `end_game()` 广播、清理状态。
 
-#### user.py：定义User类。
-导入 enums.py（角色/状态）、system.py（Global/Config）。
-与 room.py 相互引用：使用TYPE_CHECKING避免循环导入。User有room属性，Room有players字典（key: nick, value: User）。
-main.py 导入：创建User实例，调用User方法处理输入。
+## 3️⃣ 数据流与协作
+- **Global Registry**：`Global.rooms` 与 `Global.users` 分别持有房间、玩家实例，提供线程安全的注册/获取。
+- **房间 ↔ 玩家**：`Room.players` 保存 `nick → User`，`User.room` 指回当前房间；消息通过 `Room.log` 发布，`User._game_msg_syncer` 异步消费。
+- **角色技能**：`user.role_instance` 将具体技能下沉到 `roles/*.py`，夜间行动、确认、倒计时均通过角色实例封装，便于添加新身份。
+- **大厅复用**：`models/lobby` 将房间预设、链接区、刷新 UI 等集中管理，`main.py` 只需调用异步接口即可完成大厅体验。
 
-#### room.py：定义Room类。
-导入 enums.py（所有枚举）、system.py（Global）、user.py（User）、utils.py（rand_int, say）。
-与 user.py 相互引用：Room管理User列表，调用User方法（如should_act()）。
-main.py 导入：创建/获取Room，调用Room方法（如start_game()）。
-
-#### main.py：入口脚本。
-导入 enums.py（配置选项）、room.py（Room）、user.py（User）、utils.py（add_cancel_button, get_interface_ip）、system.py（不直接，但通过Room/User）。
-整合一切：创建User/Room，处理PyWebIO输入，调用Room/User的逻辑方法。
-
-
-数据流动和关系图
-
-全局管理（system.py）：
-Global.rooms: dict[str, Room]（房间ID → Room实例）。
-Global.users: dict[str, User]（昵称 → User实例）。
-
-房间与玩家（room.py 和 user.py）：
-Room.players: dict[str, User]（昵称 → User）。
-User.room: Optional[Room]（玩家所属房间）。
-Room.log: List[Tuple[Union[str, None], Union[str, LogCtrl]]]（消息日志，User通过_syncer同步到game_msg）。
-
-枚举（enums.py）：提供常量，如Role.WOLF用于User.role和Room.roles_pool。
-入口（main.py）：用户输入 → 创建User/Room → Room.add_player(User) → 游戏循环（Room.game_loop()） → 用户行动（User.wolf_kill_player()等）。
-
-### 3. 调用逻辑
-程序的执行流程是异步的，使用asyncio和PyWebIO的协程。核心是main()函数的while循环，监听用户输入并调用User/Room方法。
-启动流程（main.py）
-
-服务器启动：if name == 'main' → 使用pyngrok暴露端口 → start_server(main, port=8080)。
-设置信号处理（SIGINT关闭服务器）。
-输出局域网/公网地址。
-
-用户会话（main()协程）：
-输入昵称 → User.alloc(nick, task_id)（注册到Global.users）。
-defer_call(on_close)：会话关闭时User.free()（注销用户）。
-输入大厅选项（创建/加入房间）：
-创建房间：输入配置（狼数、神职等） → Room.alloc(room_setting)（使用enums.Role.from_option解析选项，注册到Global.rooms）。
-加入房间：输入ID → Room.get(room_id)（从Global.rooms获取） → 验证（validate_room_join）。
-
-put_scrollable(user.game_msg)：显示消息框。
-room.add_player(user)：加入房间，启动user.start_syncer()（消息同步线程）。
-
-主循环（while True in main()）：
-await asyncio.sleep(0.2)：轮询。
-根据条件显示按钮（input_group）：
-房主（room.get_host()）：显示“开始游戏”、“公布死亡”、“结束服务器”等。
-玩家：根据room.stage显示行动按钮（如狼人阶段：wolf_team_op选择刀人）。
-
-用户点击按钮 → data = await input_group() → 根据data调用方法：
-'host_op' == '开始游戏' → room.start_game()。
-'wolf_team_op' → user.wolf_kill_player(nick)。
-类似：seer_identify_player、witch_kill_player等（这些方法用@player_action装饰，确保阶段匹配）。
-'publish_death' → 房主公布死亡（room.broadcast_msg），设置room.stage = GameStage.Day。
-
-输入阻塞（user.input_blocking = True/False）：防止并发输入。
-
-
-游戏核心逻辑（room.py）
-
-房间创建（Room.alloc）：
-解析配置：roles = [Role.WOLF * wolf_num + ...]（使用enums.Role）。
-roles_pool = copy(roles)（用于洗牌）。
-witch_rule/guard_rule 从enums解析。
-
-启动游戏（room.start_game()）：
-检查人数（len(players) >= len(roles)）。
-洗牌分配：random.shuffle(roles_pool) → user.role = pop()。
-初始化技能（如女巫的heal/poison）。
+## 4️⃣ 时序概览
+```
+客户端接入 → main.py 初始化 → models.lobby 渲染大厅/创建房间
+  → Room.alloc & User.add_player → Room.start_game
+     → Room.night_logic / day phases ↔ roles/* 动作确认
+        → Room.check_game_end → end_game → 回到大厅或关闭会话
+```
 run_async(room.game_loop())：启动游戏循环线程。
 
 游戏循环（room.game_loop()）：
@@ -350,72 +294,52 @@ hunter.py：将开枪入口适配为支持确认（占位式实现，开枪目�
 移除了状态检查条件，改为只要是狼人角色（Role.WOLF 或 Role.WOLF_KING）就发送消息，无论玩家是否存活或是否已行动。
 
 ## 2025-11-21 其他玩家的操作界面优化
-main.py
+1. main.py：
+    - 集成新的女巫操作控件：witch_heal_confirm、witch_poison_op、witch_poison_confirm。
+    - 将猎人确认操作加入 input_group 的动作处理逻辑，确保每个角色的新 UI 能通过统一的输入组提交。
+2.room.py
+    修复阶段关闭刷新逻辑：每个玩家的会话现在会正确发送取消事件，避免之前的 Output.send()/coro not found 错误。
+    保证夜晚阶段结束后所有玩家的 UI 同步更新。
 
-集成新的女巫操作控件：witch_heal_confirm、witch_poison_op、witch_poison_confirm。
-将猎人确认操作加入 input_group 的动作处理逻辑，确保每个角色的新 UI 能通过统一的输入组提交。
+3. wolf.py
+    重构 confirm()：狼人阶段保持等待，直到所有存活的狼人行动或超时。
+    使用共享投票映射和 _check_all_wolves_acted() 辅助方法。
+    广播逻辑仍发送给所有狼人。
 
-room.py
+4. seer.py
+    优化 identify_player：安全解析 "seat. nick" 格式，确保预选按钮正确触发能力。
 
-修复阶段关闭刷新逻辑：每个玩家的会话现在会正确发送取消事件，避免之前的 Output.send()/coro not found 错误。
-保证夜晚阶段结束后所有玩家的 UI 同步更新。
+5. witch.py
+    重建女巫操作 UI，移除 put_html，新增：
+    解药提示，带专用确认按钮和自动消息。
+    毒药提示，显示所有玩家按钮，支持禁用/自选/死亡状态，红色高亮，取消支持，独立确认按钮。
+    新增处理函数：heal_player、select_poison_target、confirm_poison。
+    增加状态清理，避免重复提示。
 
-wolf.py
+6. guard.py
+    重设计 UI：显示所有存活玩家（按座位排序），高亮当前选择，允许守护任意存活玩家。
+    修复 "seat. nick" 解析逻辑。
+7. hunter.py
+    增加显式确认操作，猎人确认身份并结束阶段。
+    状态消息现在每晚只发送一次。
 
-重构 confirm()：狼人阶段保持等待，直到所有存活的狼人行动或超时。
-使用共享投票映射和 _check_all_wolves_acted() 辅助方法。
-广播逻辑仍发送给所有狼人。
+## 2025-11-21 补丁更新2
+1. wolf.py
+    移除了操作列表中的 put_html，将当前投票摘要移到 help_text 中，彻底解决狼人确认时出现的 Output.send() 崩溃问题。
+2. witch.py
 
-seer.py
+    重构女巫操作面板，仅使用 actions 元素：
+    添加解药和毒药的确认消息。
+    支持“无操作”处理（通过自定义 skip）。
+    确保毒药的取消/确认流程逻辑清晰、无重复提示。
 
-优化 identify_player：安全解析 "seat. nick" 格式，确保预选按钮正确触发能力。
-
-witch.py
-
-重建女巫操作 UI，移除 put_html，新增：
-
-解药提示，带专用确认按钮和自动消息。
-毒药提示，显示所有玩家按钮，支持禁用/自选/死亡状态，红色高亮，取消支持，独立确认按钮。
-
-
-新增处理函数：heal_player、select_poison_target、confirm_poison。
-增加状态清理，避免重复提示。
-
-guard.py
-
-重设计 UI：显示所有存活玩家（按座位排序），高亮当前选择，允许守护任意存活玩家。
-修复 "seat. nick" 解析逻辑。
-
-hunter.py
-
-增加显式确认操作，猎人确认身份并结束阶段。
-状态消息现在每晚只发送一次。
-
---- update v2----
-wolf.py
-
-移除了操作列表中的 put_html，将当前投票摘要移到 help_text 中，彻底解决狼人确认时出现的 Output.send() 崩溃问题。
-
-witch.py
-
-重构女巫操作面板，仅使用 actions 元素：
-
-添加解药和毒药的确认消息。
-支持“无操作”处理（通过自定义 skip）。
-确保毒药的取消/确认流程逻辑清晰、无重复提示。
-
-
-
-guard.py
-
-重写守卫 UI：
-
-显示所有存活玩家。
-添加确认/跳过的私聊消息。
-清理解析和高亮逻辑，保证交互一致性。
-
-main.py：已集成女巫和猎人的确认控件，无额外 UI 冗余（猎人保持单一确认按钮）。
-seer.py：验证预言家仍正常渲染标准按钮，且在移除 put_html 后不再被阻塞。
+3. guard.py
+    重写守卫 UI：
+        显示所有存活玩家。
+        添加确认/跳过的私聊消息。
+        清理解析和高亮逻辑，保证交互一致性。
+4. main.py：已集成女巫和猎人的确认控件，无额外 UI 冗余（猎人保持单一确认按钮）。
+5. seer.py：验证预言家仍正常渲染标准按钮，且在移除 put_html 后不再被阻塞。
 
 ## 2025-11-22 补丁更新
 1. main.py now appends统一的 刷新 按钮到每次 input_group，并在点按后立刻取消倒计时与输入，重新渲染当前阶段，不会误触发其他操作。
@@ -586,3 +510,8 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 - 创建房间弹窗：按照“自定义 / 12人版型 / 开发者测试版型”三段分组呈现预设按钮，右上角支持 ✕ 关闭；选择“手动配置”后仍可进入原有的完整配置表单，取消任一步骤都会返回大厅。
 - 加入房间弹窗：房号输入框与“加入房间”按钮同排显示、整体留白更紧凑；下方的“房间信息”列表改为可点击按钮，直接填入房号并尝试加入，同时保留一键刷新以更新房间余量。
 - 弹窗均可随时通过 ✕ 关闭并返回大厅，确保玩家误触时不用重新加载页面；加入逻辑也在房间关闭后提示“房间不存在或已关闭”而不是直接报错。
+
+## 2025-11-25 大厅模块拆分与文档同步
+1. 将大厅页面、房间预设、外部链接、房间加入等逻辑从 `main.py` 抽离到 `models/lobby.py`，`main.py` 仅负责调用异步接口。
+2. `make_scope_name()` 移动到 `utils.py`，方便大厅与其它界面共享统一的 Scope 命名策略。
+3. README 重新梳理模块分层与运行流程，突出大厅模块的位置，方便后续维护大厅 UI。

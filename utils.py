@@ -1,5 +1,6 @@
 # utils.py
 import random
+import re
 import socket
 import subprocess
 import threading
@@ -58,3 +59,11 @@ def add_cancel_button(buttons: list):
     if not isinstance(buttons, list):
         buttons = []
     return buttons + [{'label': '放弃', 'type': 'cancel'}]
+
+
+def make_scope_name(prefix: str, nick: str) -> str:
+    """Generate a PyWebIO scope-safe name for a user."""
+    suffix = re.sub(r'[^0-9A-Za-z_-]', '_', nick or '')
+    if not suffix:
+        suffix = 'player'
+    return f'{prefix}_{suffix}'
