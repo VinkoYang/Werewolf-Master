@@ -15,7 +15,8 @@ class Witch(RoleBase):
         return {
             'witch_heal_confirm': self.heal_player,
             'witch_poison_op': self.select_poison_target,
-            'witch_poison_confirm': self.confirm_poison
+            'witch_poison_confirm': self.confirm_poison,
+            'witch_skip_stage': self.skip,
         }
 
     def should_act(self) -> bool:
@@ -97,6 +98,14 @@ class Witch(RoleBase):
                 self.user.send_msg('你已经没有药了')
                 self.user.skill['witch_no_potion_sent'] = True
             return []
+
+        inputs.append(
+            actions(
+                name='witch_skip_stage',
+                buttons=[{'label': '放弃本夜操作', 'value': 'skip_stage', 'color': 'secondary'}],
+                help_text='若不再使用药水，可点击放弃结束夜间行动。'
+            )
+        )
 
         return inputs
 
@@ -207,8 +216,11 @@ class Witch(RoleBase):
             return
         pending = self.user.skill.pop('pending_poison_target', None)
         if not self.user.skill.get('witch_action_notified', False):
-            if not pending:
+            if pending:
+                self.user.send_msg('你放弃了毒药，今晚未再操作')
+            else:
                 self.user.send_msg('今晚，你没有操作')
-                self.user.skill['witch_action_notified'] = True
+            self.user.skill['witch_action_notified'] = True
+        self.user.skill['acted_this_stage'] = True
         self.user.skill.pop('witch_stage_ready', None)
 

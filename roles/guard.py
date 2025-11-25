@@ -34,6 +34,10 @@ class Guard(RoleBase):
             if u.status == PlayerStatus.DEAD:
                 btn['disabled'] = True
                 btn['color'] = 'secondary'
+            elif self._is_consecutive_protect(u.nick):
+                btn['disabled'] = True
+                btn['color'] = 'secondary'
+                btn['label'] = f"{label}（不可连守）"
             elif u.nick == current_choice:
                 btn['color'] = 'warning'
             buttons.append(btn)
@@ -55,6 +59,9 @@ class Guard(RoleBase):
         # 解析昵称：处理 "seat. nick" 格式
         target_nick = nick.split('.', 1)[-1].strip()
         
+        if self._is_consecutive_protect(target_nick):
+            return '不能连续两晚守同一个玩家'
+
         target = self.user.room.players.get(target_nick)
         if not target:
             return '查无此人'
@@ -78,6 +85,7 @@ class Guard(RoleBase):
             else:
                 target.status = PlayerStatus.PENDING_GUARD
         self.user.skill['last_protect'] = nick
+        self.user.skill['last_protect_round'] = getattr(self.user.room, 'round', None)
         self.user.skill['acted_this_stage'] = True
         seat = target.seat if target else '?'
         self.user.send_msg(f'今晚，你守护了{seat}号玩家')
@@ -94,3 +102,14 @@ class Guard(RoleBase):
         self.user.skill['acted_this_stage'] = True
         if self.user.room:
             self.user.room.waiting = False
+
+    def _is_consecutive_protect(self, target_nick: Optional[str]) -> bool:
+        room = self.user.room
+        if not room or not target_nick:
+            return False
+        last_target = self.user.skill.get('last_protect')
+        last_round = self.user.skill.get('last_protect_round')
+        current_round = getattr(room, 'round', None)
+        if last_target != target_nick or last_round is None or current_round is None:
+            return False
+        return current_round - last_round == 1

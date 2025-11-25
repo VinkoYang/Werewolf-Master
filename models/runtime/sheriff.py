@@ -532,6 +532,29 @@ class SheriffFlowMixin:
         self._start_sheriff_vote_timer()
         return None
 
+    def force_sheriff_abstain(self: 'Room', user: 'User', reason: str = 'timeout') -> bool:
+        state = self.sheriff_state or {}
+        if state.get('phase') not in ('vote', 'pk_vote'):
+            return False
+        if user.nick not in state.get('eligible_voters', []):
+            return False
+        if user.skill.get('sheriff_has_balloted'):
+            return False
+        if not self._can_player_vote(user.nick):
+            return False
+
+        self.record_sheriff_ballot(user, '弃票')
+        message = None
+        if reason == 'timeout':
+            message = '⏱️ 超时未投票，系统视为弃票'
+        elif reason == 'cancel':
+            message = '你放弃了投票，系统视为弃票'
+        elif isinstance(reason, str):
+            message = reason
+        if message:
+            user.send_msg(message)
+        return True
+
     def record_sheriff_ballot(self: 'Room', user: 'User', target: str) -> None:
         state = self.sheriff_state or {}
         if state.get('phase') not in ('vote', 'pk_vote'):
@@ -609,18 +632,14 @@ class SheriffFlowMixin:
         if state.get('phase') not in ('vote', 'pk_vote'):
             return
         eligible = state.get('eligible_voters', [])
+        timed_out = []
         for nick in eligible:
             player = self.players.get(nick)
-            if not player or not self._is_alive(nick):
-                continue
-            if player.skill.get('sheriff_has_balloted'):
-                continue
-            player.skill['sheriff_has_balloted'] = True
-            player.skill['sheriff_vote_pending'] = False
-            vote_records = state.setdefault('vote_records', {})
-            abstain = vote_records.setdefault('弃票', [])
-            if nick not in abstain:
-                abstain.append(nick)
+            if player and self.force_sheriff_abstain(player, reason='timeout'):
+                timed_out.append(nick)
+        if timed_out:
+            labels = '、'.join(self._format_label(nick) for nick in timed_out)
+            self.broadcast_msg(f'{labels} 超时未投票，系统自动判为弃票。')
         self.finish_sheriff_vote()
 
     def start_pk_speech(self: 'Room') -> None:

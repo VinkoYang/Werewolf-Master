@@ -40,10 +40,7 @@ class WolfKing(Wolf):
 
         room = self.user.room
         if room and room.stage == GameStage.WOLF:
-            ops = list(super().get_actions())
-            if not ops:
-                return []
-            return ops + [self._build_confirm_action('确认当前选择（20秒内）')]
+            return super().get_actions()
 
         if room and room.stage == GameStage.WOLF_KING and self.should_act():
             if not self.user.skill.get('wolfking_msg_sent', False):

@@ -613,7 +613,7 @@ async def main():
                             if phase == 'signup' and not user.skill.get('sheriff_voted', False):
                                 user.room.record_sheriff_choice(user, '不上警')
                             elif phase in ('vote', 'pk_vote') and user.skill.get('sheriff_vote_pending', False):
-                                user.room.record_sheriff_ballot(user, '弃票')
+                                user.room.force_sheriff_abstain(user, reason='timeout')
                             elif phase == 'deferred_withdraw':
                                 user.room.complete_deferred_withdraw()
                             elif (
@@ -803,6 +803,10 @@ async def main():
                     put_html('')
             except Exception:
                 pass
+            if room.stage == GameStage.SHERIFF:
+                phase = sheriff_state.get('phase') if sheriff_state else None
+                if phase in ('vote', 'pk_vote') and current_user.skill.get('sheriff_vote_pending', False):
+                    room.force_sheriff_abstain(current_user, reason='cancel')
             current_user.skip()
             continue
 
