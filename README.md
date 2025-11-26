@@ -358,6 +358,8 @@ hunter.py：将开枪入口适配为支持确认（占位式实现，开枪目�
 - 扩展 start_last_words() 以支持“只遗言不技能”的模式，并新增 _prompt_current_last_word_speech() helper，让白天技能阶段与遗言阶段完全分离但依旧沿用原有 UI 逻辑。
 - Added sheriff-eligibility helpers in room.py so players marked for death overnight still count as contestants. All sheriff-specific flows (record_sheriff_choice, candidate lists, PK speeches) now treat “night pending” players as available until昨夜信息公布完毕. main.py uses the new Room.can_participate_in_sheriff() to render the 上警/退水/投票控件 even if该玩家已在夜里死亡但尚未公布。
 - Ensured that if such a pending player当选警长而在公布时阵亡，现有“技能 → 警徽移交 → 遗言”流水线会触发，因为他们被包含在 follow-up 队列里（逻辑已具备，无需额外改动）。
+
+
 - Fixed猎人开枪后的流程：hunter.py 现在在确认击杀后调用 room.advance_last_words_progress()，避免房间停留在“被带走”广播。被带走的白痴等玩家会获得正常的被动技能/遗言面板。也顺带确保白痴在日间被动阶段会继续进入移交/遗言流程。
     当 没有警长存活 时，prompt_sheriff_order() 会随机选择一名存活玩家作为锚点，并随机选择 顺序/逆序，从该锚点开始发言。
 ## 2025-11-24 更新补丁3
@@ -551,3 +553,9 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 ## 2025-11-25 README 资源同步
 - README 顶部的文档链接与预览截图已统一指向新的 `doc/` 与 `pics/` 目录，避免在移动文件后出现 404。
 - `# Update Notes` 去重并合并了重复条目，方便在底部快速查阅补丁历史。
+
+## 2025-11-25 大厅与座位 UX 更新
+- **大厅更聚焦**：大厅只保留创建/加入房间和资料按钮。聊天窗口、倒计时与“刷新操作窗口”按钮只在进入房间后才渲染，并在离开房间时统一清理。
+- **座位面板**：操作窗口下方新增“座位”面板，实时展示所有号码牌。空位以绿色可点击按钮呈现，可直接换座；已被占用的座位为灰色并显示玩家昵称。
+- **即时同步**：玩家进入/离开房间或更换座位时，面板自动刷新。新加入的玩家会收到一条私聊提示“你当前的号码牌：X号”，同时面板立即反映当前占座情况。
+- 相关实现集中在 `main.py`（Scope 控制、面板渲染）与 `models/room.py`（座位快照）以及 `models/user.py`（消息流）。

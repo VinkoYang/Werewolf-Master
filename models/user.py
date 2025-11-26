@@ -70,7 +70,8 @@ class User:
                     # 私聊消息以红色显示
                     self.game_msg.append(put_html(f"<div style='color:red'>Private: {msg[1]}</div>"))
                 elif msg[0] == Config.SYS_NICK:
-                    self.game_msg.append(f'Public: {msg[1]}')
+                    content = msg[1]
+                    self.game_msg.append(f'Public: {content}')
                 elif msg[0] is None and msg[1] == LogCtrl.RemoveInput and self.input_blocking:
                     get_current_session().send_client_event({
                         'event': 'from_cancel',
