@@ -77,7 +77,7 @@ class Nightmare(Wolf):
 
         for u in all_players:
             label = f"{u.seat}. {u.nick}"
-            btn = {'label': label, 'value': label}
+            btn = {'label': label, 'value': label, 'color': 'primary'}
 
             if u.status == PlayerStatus.DEAD:
                 btn['disabled'] = True
@@ -92,16 +92,13 @@ class Nightmare(Wolf):
                 btn['disabled'] = True
                 btn['color'] = 'secondary'
                 btn['label'] = f"{label}（不可连恐）"
-            elif not is_first_night and u.role in WOLF_TEAM_ROLES:
-                # 非首夜不可恐惧狼队友
+            elif (not is_first_night) and u.role in WOLF_TEAM_ROLES:
+                # 第二晚及以后禁止恐惧狼队友，按钮置灰
                 btn['disabled'] = True
                 btn['color'] = 'secondary'
                 btn['label'] = f"{label}（狼队友）"
             elif u.nick == current_choice:
                 btn['color'] = 'warning'
-            elif is_first_night and u.role in WOLF_TEAM_ROLES:
-                # 首夜可以恐惧狼队友（会导致狼队空刀），用特殊颜色标记
-                btn['color'] = 'danger'
 
             buttons.append(btn)
 

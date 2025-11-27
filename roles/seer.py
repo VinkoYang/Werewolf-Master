@@ -19,13 +19,16 @@ class Seer(RoleBase):
         return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.SEER and not self.user.skill.get('acted_this_stage', False)
 
     def get_actions(self) -> List:
+        room = self.user.room
+        if not room or room.stage != GameStage.SEER:
+            return []
+
         if self.notify_fear_block():
             return []
 
         if not self.should_act():
             return []
         
-        room = self.user.room
         # 显示所有玩家（包括自己和已出局的），自己和已出局的按钮灰色且不可选
         players = sorted(room.players.values(), key=lambda x: x.seat if x.seat is not None else 0)
         

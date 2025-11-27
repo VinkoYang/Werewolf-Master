@@ -20,6 +20,7 @@ def player_action(func):
         # - True 或 'CONFIRMED': 最终确认，结束等待并标记为已行动
         # - 'PENDING': 临时选择，不结束等待，等待玩家点击确认
         if rv in [None, True, 'CONFIRMED']:
+            self.user.skill['countdown_skip_timeout'] = True
             self.user.room.waiting = False
         if isinstance(rv, str) and rv not in ['PENDING', 'CONFIRMED']:
             self.user.send_msg(text=rv)

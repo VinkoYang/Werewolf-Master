@@ -32,13 +32,16 @@ class Witch(RoleBase):
         return self.user.skill.get('poison', False)
 
     def get_actions(self) -> List:
+        room = self.user.room
+        if not room or room.stage != GameStage.WITCH:
+            return []
+
         if self.notify_fear_block():
             return []
 
         if not self.should_act():
             return []
-
-        room = self.user.room
+        
         pending_targets = room.list_pending_kill_players()
         pending_seats = ', '.join(str(u.seat) for u in pending_targets) if pending_targets else ''
         inputs: List = []

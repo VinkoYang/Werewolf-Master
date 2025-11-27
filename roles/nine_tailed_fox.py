@@ -41,6 +41,10 @@ class NineTailedFox(RoleBase):
         )
 
     def get_actions(self) -> List:
+        room = self.user.room
+        if not room or room.stage != GameStage.NINE_TAILED_FOX:
+            return []
+
         if self.notify_fear_block():
             return []
 

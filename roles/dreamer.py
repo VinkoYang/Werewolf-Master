@@ -19,13 +19,15 @@ class Dreamer(RoleBase):
         return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.DREAMER and not self.user.skill.get('acted_this_stage', False)
 
     def get_actions(self) -> List:
+        room = self.user.room
+        if not room or room.stage != GameStage.DREAMER:
+            return []
+
         if self.notify_fear_block():
             return []
 
         if not self.should_act():
             return []
-        
-        room = self.user.room
         
         # 获取当前玩家的临时选择
         current_choice = self.user.skill.get('pending_dream_target')

@@ -17,7 +17,10 @@ class Wolf(RoleBase):
 
     def should_act(self) -> bool:
         room = self.user.room
-        # 狼人被恐惧时无法参与当晚行动
+        if not room:
+            return False
+        if room.skill.get('wolf_forced_empty_knife', False):
+            return False
         if self.is_feared():
             return False
         return (
@@ -27,14 +30,24 @@ class Wolf(RoleBase):
         )
 
     def get_actions(self) -> List:
-        # 恐惧会直接阻断行动
-        if self.notify_fear_block():
-            return []
-
-        if not self.should_act():
-            return []
-
         room = self.user.room
+        if not room or room.stage != GameStage.WOLF:
+            return []
+        if self.user.status == PlayerStatus.DEAD:
+            return []
+
+        if self.is_feared():
+            if not self.user.skill.get('fear_notified', False):
+                self.user.send_msg('你被梦魇恐惧，今晚无法行动。')
+                self.user.skill['fear_notified'] = True
+            return self._build_idle_notice('你被梦魇恐惧，今晚无法行动', color='secondary')
+
+        if room.skill.get('wolf_forced_empty_knife', False):
+            return self._build_idle_notice('梦魇恐惧了狼队友，今晚强制空刀', color='secondary')
+
+        if self.user.skill.get('wolf_action_done', False):
+            return []
+
         # 显示所有玩家（包含自己），但已出局的玩家按钮不可用（灰色）
         players = sorted(room.players.values(), key=lambda x: x.seat if x.seat is not None else 0)
 
@@ -79,6 +92,9 @@ class Wolf(RoleBase):
 
     @player_action
     def kill_player(self, nick: str) -> Optional[str]:
+        if nick == 'wolf_idle_notice':
+            return 'PENDING'
+
         if nick == '放弃':
             return self._abstain(reason='manual')
 
@@ -157,6 +173,8 @@ class Wolf(RoleBase):
 
     def _apply_vote(self, target_nick: str) -> Optional[str]:
         room = self.user.room
+        if room.skill.get('wolf_forced_empty_knife', False):
+            return '梦魇强制空刀，今晚无法选择击杀目标'
         target_user = room.players.get(target_nick)
         if not target_user:
             return '查无此人'
@@ -190,3 +208,16 @@ class Wolf(RoleBase):
 
         self._check_all_wolves_acted()
         return None
+
+    def _build_idle_notice(self, label: str, color: str = 'secondary') -> List:
+        # 标记倒计时不应触发自动 skip
+        self.user.skill['countdown_skip_timeout'] = True
+        self.user.skill['wolf_action_done'] = True
+        self._check_all_wolves_acted()
+        return [
+            actions(
+                name='wolf_team_op',
+                buttons=[{'label': label, 'value': 'wolf_idle_notice', 'disabled': True, 'color': color}],
+                help_text='倒计时结束后自动进入下一阶段，无需操作。'
+            )
+        ]

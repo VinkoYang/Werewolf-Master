@@ -55,6 +55,7 @@ def get_global_countdown_context(room: Optional[Room]) -> Tuple[Optional[str], O
 
     stage = room.stage
     night_labels = {
+        GameStage.NIGHTMARE: '梦魇行动',
         GameStage.HALF_BLOOD: '混血儿认亲',
         GameStage.WOLF: '狼人行动',
         GameStage.SEER: '预言家查验',
@@ -742,10 +743,6 @@ async def main():
                 async def _countdown(user, seconds=20):
                     try:
                         for i in range(seconds, 0, -1):
-                            # 如果等待已结束，提前退出倒计时
-                            if not user.room.waiting:
-                                return
-                            
                             # 在操作窗口内的专用 scope 中更新倒计时（覆盖同一行），避免消息区污染
                             try:
                                 with use_scope(make_scope_name('input_countdown', user.nick), clear=True):
@@ -759,8 +756,12 @@ async def main():
                             except (RuntimeError, asyncio.CancelledError):
                                 break
     
-                        # 再次检查，如果等待已结束，不执行超时回调
-                        if not user.room.waiting:
+                        skip_timeout = user.skill.pop('countdown_skip_timeout', False)
+                        if skip_timeout:
+                            return
+
+                        room_waiting = getattr(user.room, 'waiting', False)
+                        if not room_waiting:
                             return
                         
                         try:
@@ -911,6 +912,8 @@ async def main():
                             except Exception:
                                 pass
     
+                            if current_user.skill.get('countdown_skip_timeout') is not True:
+                                current_user.skill['countdown_skip_timeout'] = False
                             task = asyncio.create_task(_countdown(current_user, seconds))
                             current_user.skill['countdown_task'] = task
                     except Exception:
@@ -935,15 +938,24 @@ async def main():
     
                 # 如果用户按下确认键，取消倒计时并调用角色确认方法（若存在）
                 if data and data.get('confirm_action'):
-                    task = current_user.skill.pop('countdown_task', None)
-                    if task:
+                    preserve_night_countdown = (
+                        room.stage in NIGHT_STAGES and
+                        current_user.role_instance and
+                        current_user.role_instance.can_act_at_night
+                    )
+                    task = current_user.skill.get('countdown_task')
+                    if task and not preserve_night_countdown:
+                        current_user.skill.pop('countdown_task', None)
                         task.cancel()
-                    # 清理倒计时显示（操作窗口内）
-                    try:
-                        with use_scope(make_scope_name('input_countdown', current_user.nick), clear=True):
-                            put_html('')
-                    except Exception:
-                        pass
+                    elif not preserve_night_countdown:
+                        current_user.skill.pop('countdown_task', None)
+                    # 夜间阶段需要保持倒计时持续运行，不清理显示
+                    if not preserve_night_countdown:
+                        try:
+                            with use_scope(make_scope_name('input_countdown', current_user.nick), clear=True):
+                                put_html('')
+                        except Exception:
+                            pass
                     # 调用角色 confirm（若实现）
                     if current_user.role_instance and hasattr(current_user.role_instance, 'confirm'):
                         try:
