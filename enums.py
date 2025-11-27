@@ -26,6 +26,7 @@ class PlayerStatus(PlainEnum):
 class GameStage(Enum):
     Day = 'Day'
     HALF_BLOOD = '混血儿'
+    NIGHTMARE = '梦魇'          # 梦魇阶段（先于狼人行动）
     WOLF = '狼人'
     SEER = '预言家'
     WITCH = '女巫'
@@ -49,6 +50,7 @@ class Role(PlainEnum):
     WOLF = '狼人'
     WOLF_KING = '狼王'
     WHITE_WOLF_KING = '白狼王'
+    NIGHTMARE = '梦魇'
     SEER = '预言家'
     WITCH = '女巫'
     GUARD = '守卫'
@@ -88,6 +90,7 @@ class Role(PlainEnum):
         return {
             '狼王': cls.WOLF_KING,
             '白狼王': cls.WHITE_WOLF_KING,
+            '梦魇': cls.NIGHTMARE,
         }
 
     @classmethod

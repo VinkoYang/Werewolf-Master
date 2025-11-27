@@ -20,6 +20,7 @@ def player_action(func):
         # - True 或 'CONFIRMED': 最终确认，结束等待并标记为已行动
         # - 'PENDING': 临时选择，不结束等待，等待玩家点击确认
         if rv in [None, True, 'CONFIRMED']:
+            self.user.skill['countdown_skip_timeout'] = True
             self.user.room.waiting = False
         if isinstance(rv, str) and rv not in ['PENDING', 'CONFIRMED']:
             self.user.send_msg(text=rv)
@@ -35,6 +36,19 @@ class RoleBase:
 
     def __init__(self, user: User):
         self.user = user
+
+    def is_feared(self) -> bool:
+        """检查玩家是否被梦魇恐惧，如被恐惧则当夜无法行动"""
+        return self.user.skill.get('feared_this_night', False)
+
+    def notify_fear_block(self) -> bool:
+        """如玩家被恐惧，发送一次性提示并返回 True 表示行动被阻断"""
+        if not self.is_feared():
+            return False
+        if not self.user.skill.get('fear_notified', False):
+            self.user.send_msg('你被梦魇恐惧，今晚无法行动。')
+            self.user.skill['fear_notified'] = True
+        return True
 
     def should_act(self) -> bool:
         return False

@@ -15,5 +15,6 @@ PRESET_WHITE_WOLF_GUARD = 'preset_white_wolf_guard'
 PRESET_WOLF_KING_GUARD = 'preset_wolf_king_guard'
 PRESET_WOLF_KING_DREAMER = 'preset_wolf_king_dreamer'
 PRESET_NINE_TAILED_FOX = 'preset_nine_tailed_fox'
+PRESET_NIGHTMARE = 'preset_nightmare'
 
 SPECIAL_PRESET_SECTION = '12人版型'

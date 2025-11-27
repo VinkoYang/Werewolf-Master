@@ -21,6 +21,8 @@ class Witch(RoleBase):
 
     def should_act(self) -> bool:
         room = self.user.room
+        if self.is_feared():
+            return False
         return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.WITCH and not self.user.skill.get('acted_this_stage', False)
 
     def has_heal(self) -> bool:
@@ -30,10 +32,16 @@ class Witch(RoleBase):
         return self.user.skill.get('poison', False)
 
     def get_actions(self) -> List:
-        if not self.should_act():
+        room = self.user.room
+        if not room or room.stage != GameStage.WITCH:
             return []
 
-        room = self.user.room
+        if self.notify_fear_block():
+            return []
+
+        if not self.should_act():
+            return []
+        
         pending_targets = room.list_pending_kill_players()
         pending_seats = ', '.join(str(u.seat) for u in pending_targets) if pending_targets else ''
         inputs: List = []

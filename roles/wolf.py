@@ -4,7 +4,7 @@ from pywebio.input import actions
 from .base import RoleBase, player_action
 from enums import GameStage, PlayerStatus, Role
 
-WOLF_ROLES = (Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING)
+WOLF_ROLES = (Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING, Role.NIGHTMARE)
 
 class Wolf(RoleBase):
     name = '狼人'
@@ -17,6 +17,12 @@ class Wolf(RoleBase):
 
     def should_act(self) -> bool:
         room = self.user.room
+        if not room:
+            return False
+        if room.skill.get('wolf_forced_empty_knife', False):
+            return False
+        if self.is_feared():
+            return False
         return (
             self.user.status != PlayerStatus.DEAD and
             room.stage == GameStage.WOLF and
@@ -24,10 +30,24 @@ class Wolf(RoleBase):
         )
 
     def get_actions(self) -> List:
-        if not self.should_act():
+        room = self.user.room
+        if not room or room.stage != GameStage.WOLF:
+            return []
+        if self.user.status == PlayerStatus.DEAD:
             return []
 
-        room = self.user.room
+        if self.is_feared():
+            if not self.user.skill.get('fear_notified', False):
+                self.user.send_msg('你被梦魇恐惧，今晚无法行动。')
+                self.user.skill['fear_notified'] = True
+            return self._build_idle_notice('你被梦魇恐惧，今晚无法行动', color='secondary')
+
+        if room.skill.get('wolf_forced_empty_knife', False):
+            return self._build_idle_notice('梦魇恐惧了狼队友，今晚强制空刀', color='secondary')
+
+        if self.user.skill.get('wolf_action_done', False):
+            return []
+
         # 显示所有玩家（包含自己），但已出局的玩家按钮不可用（灰色）
         players = sorted(room.players.values(), key=lambda x: x.seat if x.seat is not None else 0)
 
@@ -72,8 +92,11 @@ class Wolf(RoleBase):
 
     @player_action
     def kill_player(self, nick: str) -> Optional[str]:
+        if nick == 'wolf_idle_notice':
+            return 'PENDING'
+
         if nick == '放弃':
-            return self._abstain()
+            return self._abstain(reason='manual')
 
         # 解析传入的 "seat. nick" 格式，取出昵称
         target_nick = nick.split('.', 1)[-1].strip()
@@ -85,14 +108,32 @@ class Wolf(RoleBase):
         target_nick = self.user.skill.get('wolf_choice', None)
 
         if not target_nick:
-            return self._abstain()
+            return self._abstain(reason='manual')
 
         result = self._apply_vote(target_nick)
         return result if result is not None else True
 
-    def _abstain(self):
+    def _abstain(self, reason: Optional[str] = None):
         room = self.user.room
+        if reason is None:
+            reason = self.user.skill.get('skip_reason')
+
+        # 只有明确的 manual/timeout 才真正执行放弃，防止刷新或重复回调乱入
+        if reason not in ('manual', 'timeout'):
+            return 'PENDING'
+        # 如果已经行动过，不要重复发送消息
+        if self.user.skill.get('wolf_action_done', False):
+            return True
+        
+        # 先通知其他狼人该玩家放弃
+        for u in room.players.values():
+            if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE:
+                room.send_msg(f"{self.user.seat}号玩家选择放弃本夜击杀", nick=u.nick)
+        
+        # 再发送个人确认消息
         self.user.send_msg('你今夜放弃选择击杀目标')
+        
+        # 清理投票记录
         votes_map = room.skill.get('wolf_votes')
         if votes_map:
             for target, voters in list(votes_map.items()):
@@ -102,9 +143,12 @@ class Wolf(RoleBase):
                         votes_map.pop(target)
         self.user.skill.pop('wolf_choice', None)
         self.user.skill['wolf_action_done'] = True
-        for u in room.players.values():
-            if u.role in WOLF_ROLES and u.status == PlayerStatus.ALIVE:
-                room.send_msg(f"{self.user.seat}号玩家选择放弃本夜击杀", nick=u.nick)
+        
+        # 取消倒计时任务
+        task = self.user.skill.pop('countdown_task', None)
+        if task:
+            task.cancel()
+        
         self._check_all_wolves_acted()
         return True
     
@@ -124,10 +168,13 @@ class Wolf(RoleBase):
 
     @player_action
     def skip(self):
-        return self._abstain()
+        reason = self.user.skill.pop('skip_reason', None)
+        return self._abstain(reason=reason)
 
     def _apply_vote(self, target_nick: str) -> Optional[str]:
         room = self.user.room
+        if room.skill.get('wolf_forced_empty_knife', False):
+            return '梦魇强制空刀，今晚无法选择击杀目标'
         target_user = room.players.get(target_nick)
         if not target_user:
             return '查无此人'
@@ -148,6 +195,11 @@ class Wolf(RoleBase):
 
         self.user.skill['wolf_action_done'] = True
         self.user.skill.pop('wolf_choice', None)
+        
+        # 取消倒计时任务，防止超时后重复调用 skip
+        task = self.user.skill.pop('countdown_task', None)
+        if task:
+            task.cancel()
 
         target_seat = target_user.seat if target_user else '?'
         for u in room.players.values():
@@ -156,3 +208,16 @@ class Wolf(RoleBase):
 
         self._check_all_wolves_acted()
         return None
+
+    def _build_idle_notice(self, label: str, color: str = 'secondary') -> List:
+        # 标记倒计时不应触发自动 skip
+        self.user.skill['countdown_skip_timeout'] = True
+        self.user.skill['wolf_action_done'] = True
+        self._check_all_wolves_acted()
+        return [
+            actions(
+                name='wolf_team_op',
+                buttons=[{'label': label, 'value': 'wolf_idle_notice', 'disabled': True, 'color': color}],
+                help_text='倒计时结束后自动进入下一阶段，无需操作。'
+            )
+        ]

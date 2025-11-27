@@ -223,6 +223,65 @@ async def prompt_room_join(current_user: User) -> Optional[str]:
     return result
 
 
+async def prompt_seat_selection(room: Room, current_user: User) -> Optional[int]:
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+    scope_name = make_scope_name('seat_selector', current_user.nick)
+
+    def _cancel():
+        if future.done():
+            return
+        close_popup()
+        future.set_result(None)
+
+    def _choose(seat: int):
+        if future.done():
+            return
+        available = set(room.list_available_seats())
+        if seat not in available:
+            toast('该座位已被占用或超出范围，请重新选择', color='error')
+            _render()
+            return
+        close_popup()
+        future.set_result(seat)
+
+    def _render():
+        total = len(room.roles)
+        taken = {u.seat: u.nick for u in room.players.values() if u.seat}
+        available = set(room.list_available_seats())
+        body = []
+        if not available:
+            body.append(put_text('房间暂时无可用座位。'))
+            body.append(put_button('返回大厅', onclick=_cancel, color='danger'))
+        else:
+            buttons = []
+            for seat in range(1, total + 1):
+                occupant = taken.get(seat)
+                label = f"{seat}号" + (f"（{occupant}）" if occupant else '')
+                buttons.append({
+                    'label': label,
+                    'value': seat,
+                    'color': 'success' if seat in available else 'secondary',
+                    'disabled': seat not in available,
+                })
+            body.append(put_markdown('#### 请选择你的座位号'))
+            body.append(put_buttons(buttons, onclick=_choose))
+            body.append(put_text('绿色按钮表示可选座位，灰色为已被占用。'))
+            body.append(put_button('刷新座位情况', onclick=_render, color='info', outline=True))
+        with use_scope(scope_name, clear=True):
+            put_column(body)
+
+    header = put_row([
+        put_text(f'选择座位（房间 {room.id or "未编号"}）'),
+        put_button('✕', onclick=_cancel, color='danger', outline=True)
+    ], size='85% 15%')
+
+    popup('选择座位', put_column([header, put_scope(scope_name)]), closable=False)
+    _render()
+    result = await future
+    return result
+
+
 async def select_room_creation_preset() -> Optional[str]:
     loop = asyncio.get_event_loop()
     future = loop.create_future()

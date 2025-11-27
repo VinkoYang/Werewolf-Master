@@ -1,4 +1,5 @@
 # utils.py
+import asyncio
 import random
 import re
 import socket
@@ -10,6 +11,17 @@ from sys import platform
 
 logger = getLogger('Utils')
 logger.setLevel('DEBUG')
+
+
+async def async_sleep(seconds: float):
+    """兼容 PyWebIO 环境的异步 sleep 函数"""
+    try:
+        loop = asyncio.get_running_loop()
+        await asyncio.sleep(seconds)
+    except RuntimeError:
+        # 如果 asyncio.sleep 失败，使用 tornado 的方式
+        from tornado.ioloop import IOLoop
+        await IOLoop.current().run_in_executor(None, lambda: __import__('time').sleep(seconds))
 
 def rand_int(min_value=0, max_value=100):
     return random.randint(min_value, max_value)

@@ -358,6 +358,8 @@ hunter.py：将开枪入口适配为支持确认（占位式实现，开枪目�
 - 扩展 start_last_words() 以支持“只遗言不技能”的模式，并新增 _prompt_current_last_word_speech() helper，让白天技能阶段与遗言阶段完全分离但依旧沿用原有 UI 逻辑。
 - Added sheriff-eligibility helpers in room.py so players marked for death overnight still count as contestants. All sheriff-specific flows (record_sheriff_choice, candidate lists, PK speeches) now treat “night pending” players as available until昨夜信息公布完毕. main.py uses the new Room.can_participate_in_sheriff() to render the 上警/退水/投票控件 even if该玩家已在夜里死亡但尚未公布。
 - Ensured that if such a pending player当选警长而在公布时阵亡，现有“技能 → 警徽移交 → 遗言”流水线会触发，因为他们被包含在 follow-up 队列里（逻辑已具备，无需额外改动）。
+
+
 - Fixed猎人开枪后的流程：hunter.py 现在在确认击杀后调用 room.advance_last_words_progress()，避免房间停留在“被带走”广播。被带走的白痴等玩家会获得正常的被动技能/遗言面板。也顺带确保白痴在日间被动阶段会继续进入移交/遗言流程。
     当 没有警长存活 时，prompt_sheriff_order() 会随机选择一名存活玩家作为锚点，并随机选择 顺序/逆序，从该锚点开始发言。
 ## 2025-11-24 更新补丁3
@@ -551,3 +553,26 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 ## 2025-11-25 README 资源同步
 - README 顶部的文档链接与预览截图已统一指向新的 `doc/` 与 `pics/` 目录，避免在移动文件后出现 404。
 - `# Update Notes` 去重并合并了重复条目，方便在底部快速查阅补丁历史。
+
+## 2025-11-25 大厅与座位 UX 更新
+- **大厅更聚焦**：大厅只保留创建/加入房间和资料按钮。聊天窗口、倒计时与“刷新操作窗口”按钮只在进入房间后才渲染，并在离开房间时统一清理。
+- **座位面板**：操作窗口下方新增“座位”面板，实时展示所有号码牌。空位以绿色可点击按钮呈现，可直接换座；已被占用的座位为灰色并显示玩家昵称。
+- **即时同步**：玩家进入/离开房间或更换座位时，面板自动刷新。新加入的玩家会收到一条私聊提示“你当前的号码牌：X号”，同时面板立即反映当前占座情况。
+- 相关实现集中在 `main.py`（Scope 控制、面板渲染）与 `models/room.py`（座位快照）以及 `models/user.py`（消息流）。
+
+## 2025-11-26 放逐流程文档同步
+- `doc/rules.md` 新增“放逐流程说明”，明确定义平票进入 PK、只有非对决玩家参与放逐对决投票，以及再次平票判定平安日的判罚。
+- 当前实现（`models/runtime/daytime.py` 的 `start_exile_vote()` / `finish_exile_vote()` / `start_exile_pk_speech()`）已严格按照上述流程执行：首轮投票所有在场生者可投，平票时只允许非 PK 玩家在二轮投票中表决，若再度平票则广播“放逐失败，无人出局”并结束本日流程，因此无需额外代码调整。
+
+## 2025-11-27 Nightmare 补丁摘要
+
+- 新增 `roles/nightmare.py` 与 `presets/game_config_nightmare.py`，提供“梦魇 - 预女猎守”12 人板与独立恐惧阶段：梦魇可先手指定目标恐惧（当夜禁止行动），支持首夜恐惧狼队友触发强制空刀、禁止连续恐惧等规则。
+- `roles/base.py` 新增 `notify_fear_block()`，并在守卫/预言家/女巫/摄梦人/九尾/猎人/狼王/狼人等角色调用，确保被梦魇恐惧的玩家都会收到一次性私聊提示且行动按钮被移除。
+- `roles/wolf.py` 及梦魇的狼阶段跳过逻辑接入 `skip_reason`，区分“手动放弃/倒计时超时”与刷新干扰，修复狼人已锁定目标却仍重复播报“放弃击杀”的问题，同时在确认投票后会自动取消倒计时任务避免二次触发。
+
+## 2025-11-27 Nightmare 热修补丁
+
+- 恐惧提示仅在对应角色的夜间阶段触发：守卫/预言家/女巫/摄梦人/九尾妖狐会先确认 `room.stage`，然后才调用 `notify_fear_block()`，避免玩家在梦魇阶段提前收到“无法行动”的私聊而暴露行动顺序。
+- 梦魇阶段加入 20 秒全局倒计时标签，私有面板亦保持倒计时跑满；狼人即便首夜被恐惧导致强制空刀也会看到“无法行动/空刀中”的只读按钮并等待 20 秒，外界无法以倒计时长短推断其生死。
+- `presets/base.py::wait_for_player()` 支持最小等待时长、自动释放和静默超时，梦魇阶段与强制空刀阶段会在 20 秒后自动放行；若倒计时期间没有玩家动作也不会重复广播超时。
+- `roles/wolf.py` 针对被恐惧或强制空刀的狼自动打上 `wolf_action_done`，并通过只读按钮阻断任何击杀/放弃输入，确保所有狼都得等待倒计时结束再进入下一阶段。

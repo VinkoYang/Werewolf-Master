@@ -31,12 +31,14 @@ from roles.idiot import Idiot
 from roles.half_blood import HalfBlood
 from roles.white_wolf_king import WhiteWolfKing
 from roles.nine_tailed_fox import NineTailedFox
+from roles.nightmare import Nightmare
 
 role_classes = {
     Role.CITIZEN: Citizen,
     Role.WOLF: Wolf,
     Role.WOLF_KING: WolfKing,
     Role.WHITE_WOLF_KING: WhiteWolfKing,
+    Role.NIGHTMARE: Nightmare,
     Role.SEER: Seer,
     Role.WITCH: Witch,
     Role.GUARD: Guard,
@@ -76,9 +78,15 @@ class Room(RoomRuntimeMixin):
     sheriff_state: Dict[str, Any] = field(default_factory=dict)
     day_state: Dict[str, Any] = field(default_factory=dict)
     sheriff_badge_destroyed: bool = False
+    seat_state_version: int = 0
 
     async def start_game(self):
         if self.started or len(self.players) < len(self.roles):
+            return
+        standing_players = [u for u in self.players.values() if not u.seat]
+        if standing_players:
+            names = '、'.join(u.nick for u in standing_players)
+            self.broadcast_msg(f'无法开始游戏：以下玩家尚未就座 → {names}')
             return
         self.started = True
         self.game_over = False
@@ -100,14 +108,14 @@ class Room(RoomRuntimeMixin):
                 user.skill['can_shoot'] = True
             user.send_msg(f"你的身份是：{user.role_instance.name}")
 
-        for idx, user in enumerate(self.players.values(), 1):
-            user.seat = idx
-
-        seat_msg = "座位表： " + " | ".join(
-            f"{u.seat}号: {u.nick}"
-            for u in sorted(self.players.values(), key=lambda x: x.seat)
-        )
-        self.broadcast_msg(seat_msg, tts=False)
+        seat_adjusted = False
+        for user in self.players.values():
+            if not user.seat or user.seat < 1:
+                user.seat = self._pick_available_seat(None)
+                seat_adjusted = True
+            user.send_msg(f'你当前的号码牌：{user.seat}号')
+        # 游戏开始后刷新所有玩家界面
+        self._mark_seat_state_dirty()
         await asyncio.sleep(3)
 
         if not self.logic_thread:
@@ -120,14 +128,17 @@ class Room(RoomRuntimeMixin):
     def add_player(self, user: 'User'):
         if user.room or user.nick in self.players:
             raise AssertionError
+        seat = self._pick_available_seat(user.seat)
         self.players[user.nick] = user
         user.room = self
         user.start_syncer()
-        user.seat = len(self.players)
+        user.seat = seat
         status = f'【{user.nick}】进入房间，人数 {len(self.players)}/{len(self.roles)}，房主是 {self.get_host().nick}'
         user.game_msg.append(status)
         self.broadcast_msg(status)
         logger.info(f'用户 "{user.nick}" 加入房间 "{self.id}"，座位 {user.seat}')
+        user.send_msg(f'你当前的号码牌：{user.seat}号')
+        self._mark_seat_state_dirty()
 
     def remove_player(self, user: 'User'):
         if user.nick not in self.players:
@@ -135,10 +146,12 @@ class Room(RoomRuntimeMixin):
         self.players.pop(user.nick)
         user.stop_syncer()
         user.room = None
+        user.seat = None
         if not self.players:
             Global.remove_room(self.id)
             return
         self.broadcast_msg(f'人数 {len(self.players)}/{len(self.roles)}，房主是 {self.get_host().nick}')
+        self._mark_seat_state_dirty()
         logger.info(f'用户 "{user.nick}" 离开房间 "{self.id}"')
 
     def get_host(self) -> User:
@@ -166,6 +179,56 @@ class Room(RoomRuntimeMixin):
             return '房间不存在'
         if room.is_full():
             return '房间已满'
+
+    def _mark_seat_state_dirty(self):
+        self.seat_state_version += 1
+
+    def get_seat_snapshot(self):
+        total = len(self.roles)
+        seat_map = {u.seat: u.nick for u in self.players.values() if u.seat}
+        seats = []
+        for seat in range(1, total + 1):
+            seats.append({'seat': seat, 'nick': seat_map.get(seat)})
+        standing = [u.nick for u in self.players.values() if not u.seat]
+        return {
+            'version': self.seat_state_version,
+            'seats': seats,
+            'standing': standing
+        }
+
+    def _pick_available_seat(self, preferred: Optional[int]) -> int:
+        max_players = len(self.roles)
+        if max_players <= 0:
+            raise ValueError('房间尚未配置人数')
+        taken = {u.seat for u in self.players.values() if u.seat}
+        if preferred is not None:
+            if preferred < 1 or preferred > max_players:
+                raise ValueError('座位号不存在')
+            if preferred in taken:
+                raise ValueError('座位已被占用')
+            return preferred
+        for seat in range(1, max_players + 1):
+            if seat not in taken:
+                return seat
+        raise ValueError('没有可用座位')
+
+    def list_available_seats(self) -> List[int]:
+        max_players = len(self.roles)
+        taken = {u.seat for u in self.players.values() if u.seat}
+        return [seat for seat in range(1, max_players + 1) if seat not in taken]
+
+    def release_seat(self, user: 'User'):
+        if not user.seat:
+            return
+        logger.info(f'玩家 {user.nick} 起立，释放座位 {user.seat}')
+        user.seat = None
+        self._mark_seat_state_dirty()
+
+    def assign_seat(self, user: 'User', seat: Optional[int] = None):
+        seat_num = self._pick_available_seat(seat)
+        user.seat = seat_num
+        logger.info(f'玩家 {user.nick} 坐在 {seat_num} 号')
+        self._mark_seat_state_dirty()
 
     @classmethod
     def alloc(cls, room_setting) -> 'Room':

@@ -70,7 +70,8 @@ class User:
                     # 私聊消息以红色显示
                     self.game_msg.append(put_html(f"<div style='color:red'>Private: {msg[1]}</div>"))
                 elif msg[0] == Config.SYS_NICK:
-                    self.game_msg.append(f'Public: {msg[1]}')
+                    content = msg[1]
+                    self.game_msg.append(f'Public: {content}')
                 elif msg[0] is None and msg[1] == LogCtrl.RemoveInput and self.input_blocking:
                     get_current_session().send_client_event({
                         'event': 'from_cancel',
@@ -91,7 +92,9 @@ class User:
         self.game_msg_syncer.close()
         self.game_msg_syncer = None
 
-    def skip(self):
+    def skip(self, reason: Optional[str] = None):
+        """Trigger the current role's skip logic, optionally annotating the reason."""
+        self.skill['skip_reason'] = reason
         if self.role_instance:
             self.role_instance.skip()
 
