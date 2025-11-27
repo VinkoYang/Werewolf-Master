@@ -20,6 +20,9 @@ class Hunter(RoleBase):
 
     def should_act(self) -> bool:
         room = self.user.room
+        # 夜间被恐惧时无法行动
+        if room.stage == GameStage.HUNTER and self.is_feared():
+            return False
         return (self.user.status != PlayerStatus.DEAD and 
                 room.stage == GameStage.HUNTER and 
                 not self.user.skill.get('acted_this_stage', False))
@@ -27,6 +30,10 @@ class Hunter(RoleBase):
     def get_actions(self) -> List:
         if self.in_shoot_mode():
             return self.get_shoot_actions()
+
+        room = self.user.room
+        if room and room.stage == GameStage.HUNTER and self.notify_fear_block():
+            return []
 
         if not self.should_act():
             return []

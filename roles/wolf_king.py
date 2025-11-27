@@ -28,6 +28,9 @@ class WolfKing(Wolf):
             return False
         if room.stage == GameStage.WOLF:
             return super().should_act()
+        # 夜间狼王阶段也需要检查恐惧状态
+        if room.stage == GameStage.WOLF_KING and self.is_feared():
+            return False
         return (
             room.stage == GameStage.WOLF_KING and
             self.user.status != PlayerStatus.DEAD and
@@ -41,6 +44,9 @@ class WolfKing(Wolf):
         room = self.user.room
         if room and room.stage == GameStage.WOLF:
             return super().get_actions()
+
+        if room and room.stage == GameStage.WOLF_KING and self.notify_fear_block():
+            return []
 
         if room and room.stage == GameStage.WOLF_KING and self.should_act():
             if not self.user.skill.get('wolfking_msg_sent', False):

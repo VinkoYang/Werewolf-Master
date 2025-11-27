@@ -92,7 +92,9 @@ class User:
         self.game_msg_syncer.close()
         self.game_msg_syncer = None
 
-    def skip(self):
+    def skip(self, reason: Optional[str] = None):
+        """Trigger the current role's skip logic, optionally annotating the reason."""
+        self.skill['skip_reason'] = reason
         if self.role_instance:
             self.role_instance.skip()
 

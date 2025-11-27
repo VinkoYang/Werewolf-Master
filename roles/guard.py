@@ -14,11 +14,17 @@ class Guard(RoleBase):
 
     def should_act(self) -> bool:
         room = self.user.room
+        if self.is_feared():
+            return False
         return self.user.status != PlayerStatus.DEAD and room.stage == GameStage.GUARD and not self.user.skill.get('acted_this_stage', False)
 
     def get_actions(self) -> List:
+        if self.notify_fear_block():
+            return []
+
         if not self.should_act():
             return []
+        
         room = self.user.room
         current_choice = self.user.skill.get('pending_protect')
 

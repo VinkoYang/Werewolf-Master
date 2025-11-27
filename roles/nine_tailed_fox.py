@@ -31,6 +31,8 @@ class NineTailedFox(RoleBase):
 
     def should_act(self) -> bool:
         room = self.user.room
+        if self.is_feared():
+            return False
         return bool(
             room and
             self.user.status != PlayerStatus.DEAD and
@@ -39,6 +41,9 @@ class NineTailedFox(RoleBase):
         )
 
     def get_actions(self) -> List:
+        if self.notify_fear_block():
+            return []
+
         if not self.should_act():
             return []
         # 预览阶段需要包含即将死亡的单位

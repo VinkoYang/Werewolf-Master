@@ -692,33 +692,34 @@ async def main():
                             )
                         ]
     
-            control_buttons = [
-                {
+            control_buttons = []
+            if not room.started:
+                control_buttons.append({
                     'label': '离开房间',
                     'value': 'leave_room',
                     'color': 'danger'
-                }
-            ]
-            if not room.started:
+                })
                 control_buttons.append({
                     'label': '起立',
                     'value': 'stand_up',
                     'color': 'warning'
                 })
-            general_ops = [
-                actions(
-                    name='room_control',
-                    buttons=control_buttons,
-                    help_text='房间操作'
-                )
-            ]
-    
+            general_ops = []
+            if control_buttons:
+                general_ops = [
+                    actions(
+                        name='room_control',
+                        buttons=control_buttons,
+                        help_text='房间操作'
+                    )
+                ]
+
             ops = general_ops + host_ops + user_ops
             if not ops:
                 continue
     
             if ops:
-                NIGHT_STAGES = {GameStage.HALF_BLOOD, GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER}
+                NIGHT_STAGES = {GameStage.HALF_BLOOD, GameStage.NIGHTMARE, GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER}
                 # 夜间操作显示 20s 倒计时与确认键
                 if room.stage is not None:
                     # 仅在有玩家操作时（夜晚阶段）追加确认键
@@ -741,9 +742,10 @@ async def main():
                 async def _countdown(user, seconds=20):
                     try:
                         for i in range(seconds, 0, -1):
-                            # 调试日志（不再发送到玩家私聊或终端），仅在 logger 中记录
-                            # 不在终端或私聊输出调试信息，避免污染日志/消息区
-    
+                            # 如果等待已结束，提前退出倒计时
+                            if not user.room.waiting:
+                                return
+                            
                             # 在操作窗口内的专用 scope 中更新倒计时（覆盖同一行），避免消息区污染
                             try:
                                 with use_scope(make_scope_name('input_countdown', user.nick), clear=True):
@@ -752,8 +754,15 @@ async def main():
                                 # 忽略更新失败
                                 pass
     
-                            await asyncio.sleep(1)
+                            try:
+                                await asyncio.sleep(1)
+                            except (RuntimeError, asyncio.CancelledError):
+                                break
     
+                        # 再次检查，如果等待已结束，不执行超时回调
+                        if not user.room.waiting:
+                            return
+                        
                         try:
                             # 超时时，若玩家已做出临时选择则确认之；否则视为放弃并跳过
                             # 特殊处理：上警阶段
@@ -793,7 +802,7 @@ async def main():
                                 if getattr(user.room, 'current_speaker', None) == user.nick:
                                     user.room.advance_exile_speech()
                             else:
-                                pending_keys = ['wolf_choice', 'pending_protect', 'pending_dream_target', 'pending_target', 'pending_half_blood_target']
+                                pending_keys = ['wolf_choice', 'pending_protect', 'pending_dream_target', 'pending_target', 'pending_half_blood_target', 'pending_fear']
                                 has_pending = any(user.skill.get(k) for k in pending_keys)
     
                                 if user.role_instance and user.role_instance.needs_global_confirm and hasattr(user.role_instance, 'confirm'):
@@ -804,12 +813,12 @@ async def main():
                                             pass
                                     else:
                                         try:
-                                            user.skip()
+                                            user.skip(reason='timeout')
                                         except Exception:
                                             pass
                                 else:
                                     try:
-                                        user.skip()
+                                        user.skip(reason='timeout')
                                     except Exception:
                                         pass
     
@@ -921,7 +930,7 @@ async def main():
                     except Exception:
                         pass
     
-                    data = await input_group('操作', inputs=ops, cancelable=True)
+                    data = await input_group('行动', inputs=ops, cancelable=True)
                 current_user.input_blocking = False
     
                 # 如果用户按下确认键，取消倒计时并调用角色确认方法（若存在）
@@ -942,22 +951,27 @@ async def main():
                         except Exception as e:
                             current_user.send_msg(f'确认失败: {e}')
                     # 跳过后续动作处理（confirm 已处理）
-                    await asyncio.sleep(0.1)
+                    try:
+                        await asyncio.sleep(0.1)
+                    except (RuntimeError, asyncio.CancelledError):
+                        pass
                     continue
     
     
             if data is None:
-                # 清理倒计时显示并跳过
+                # 清理倒计时显示
                 try:
                     with use_scope(make_scope_name('input_countdown', current_user.nick), clear=True):
                         put_html('')
                 except Exception:
                     pass
+                
                 if room.stage == GameStage.SHERIFF:
                     phase = sheriff_state.get('phase') if sheriff_state else None
                     if phase in ('vote', 'pk_vote') and current_user.skill.get('sheriff_vote_pending', False):
                         room.force_sheriff_abstain(current_user, reason='cancel')
-                current_user.skip()
+                    current_user.skip(reason='sheriff_cancel')
+                # 页面刷新情况：不调用 skip，继续循环让用户看到操作界面
                 continue
     
             control_action = data.get('room_control')
@@ -1015,6 +1029,7 @@ async def main():
                 room.witch_rule = WitchRule.from_option(room_config['witch_rule'])
                 room.guard_rule = GuardRule.from_option(room_config['guard_rule'])
                 room.sheriff_bomb_rule = SheriffBombRule.from_option(room_config['sheriff_bomb_rule'])
+                room._mark_seat_state_dirty()  # 刷新座位界面
                 room.broadcast_msg(f'房间配置已更新：{room.desc()}')
             if data.get('sheriff_host_action') and current_user is room.get_host():
                 action = data.get('sheriff_host_action')
@@ -1113,21 +1128,27 @@ async def main():
                 task = current_user.skill.pop('countdown_task', None)
                 if task:
                     task.cancel()
-                await asyncio.sleep(0.3)
+                try:
+                    await asyncio.sleep(0.3)
+                except (RuntimeError, asyncio.CancelledError):
+                    pass
                 continue
     
             if data.get('speech_done') and current_user.nick == room.current_speaker:
                 task = current_user.skill.pop('countdown_task', None)
                 if task:
                     task.cancel()
-                current_user.skip()
+                current_user.skip(reason='speech_done')
                 if room.stage == GameStage.SPEECH:
                     room.advance_sheriff_speech(current_user.nick)
                 elif room.stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
                     room.advance_exile_speech()
     
             # 防止按钮闪烁
-            await asyncio.sleep(0.3)
+            try:
+                await asyncio.sleep(0.3)
+            except (RuntimeError, asyncio.CancelledError):
+                pass
     
 
 # ==================== 启动入口（Mac 优化 + pyngrok） ====================

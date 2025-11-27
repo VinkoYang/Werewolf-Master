@@ -10,7 +10,7 @@ from models import logger
 if TYPE_CHECKING:
     from models.room import Room
 
-WOLF_TEAM_ROLES = {Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING}
+WOLF_TEAM_ROLES = {Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING, Role.NIGHTMARE}
 
 
 class BaseGameConfig:
@@ -119,6 +119,10 @@ class DefaultGameFlow(BaseGameConfig):
 
         room.death_pending = dead_this_night
         room.update_nine_tailed_state()
+        
+        # 清除梦魇的恐惧效果
+        self._clear_nightmare_fear_effects()
+        
         room.broadcast_msg('天亮请睁眼', tts=True)
         await asyncio.sleep(2)
         needs_sheriff_phase = False
@@ -147,11 +151,45 @@ class DefaultGameFlow(BaseGameConfig):
             await asyncio.sleep(0.5)
 
     async def run_pre_wolf_phase(self):
+        await self._run_nightmare_stage_if_needed()
         await self.handle_custom_pre_wolf_stages()
         await self._run_half_blood_stage_if_needed()
 
     async def handle_custom_pre_wolf_stages(self):
         """Hook for subclasses to execute stages before狼队行动。"""
+
+    async def _run_nightmare_stage_if_needed(self):
+        """梦魇单独睁眼阶段（先于狼人行动）"""
+        room = self.room
+        if not self.has_configured_role([Role.NIGHTMARE]):
+            return
+
+        # 先清理所有倒计时任务，避免遗留任务干扰
+        for user in room.players.values():
+            task = user.skill.pop('countdown_task', None)
+            if task:
+                task.cancel()
+        
+        room.stage = GameStage.NIGHTMARE
+        
+        # 立即设置 waiting 状态，防止玩家输入循环启动新的倒计时
+        if self.has_active_role([Role.NIGHTMARE]):
+            room.waiting = True
+        
+        for user in room.players.values():
+            user.skill['acted_this_stage'] = False
+
+        room.broadcast_msg('梦魇请睁眼', tts=True)
+        await asyncio.sleep(1)
+
+        if self.has_active_role([Role.NIGHTMARE]):
+            await self.wait_for_player()
+        else:
+            await asyncio.sleep(5)
+
+        await asyncio.sleep(1)
+        room.broadcast_msg('梦魇请闭眼', tts=True)
+        await asyncio.sleep(2)
 
     async def _run_half_blood_stage_if_needed(self):
         room = self.room
@@ -195,20 +233,32 @@ class DefaultGameFlow(BaseGameConfig):
             white_king = next((u for u in wolf_players if u.role == Role.WHITE_WOLF_KING), None)
             if white_king:
                 wolf_info += f"，白狼王是：{room._format_label(white_king.nick)}"
+            nightmare = next((u for u in wolf_players if u.role == Role.NIGHTMARE), None)
+            if nightmare:
+                wolf_info += f"，梦魇是：{room._format_label(nightmare.nick)}"
 
             for u in wolf_players:
                 room.send_msg(wolf_info, nick=u.nick)
 
         await asyncio.sleep(2)
 
-        if wolf_players:
+        # 检查是否被梦魇恐惧导致狼队空刀
+        wolf_forced_empty = room.skill.get('wolf_forced_empty_knife', False)
+
+        if wolf_players and not wolf_forced_empty:
             room.waiting = True
             await self.wait_for_player()
+        elif wolf_forced_empty:
+            # 梦魇恐惧狼队友导致空刀，通知狼队
+            for u in room.players.values():
+                if u.role in WOLF_TEAM_ROLES:
+                    room.send_msg("梦魇恐惧了狼队友，今夜狼队空刀。", nick=u.nick)
+            await asyncio.sleep(3)
         else:
             await asyncio.sleep(1)
 
         wolf_votes = room.skill.get('wolf_votes', {})
-        if wolf_players and wolf_votes:
+        if wolf_players and wolf_votes and not wolf_forced_empty:
             counts = {t: len(voters) for t, voters in wolf_votes.items()}
             max_count = max(counts.values())
             candidates = [t for t, c in counts.items() if c == max_count]
@@ -289,6 +339,14 @@ class DefaultGameFlow(BaseGameConfig):
         return any(role in room.roles for role in roles) or any(
             user.role in roles for user in room.players.values()
         )
+
+    def _clear_nightmare_fear_effects(self):
+        """清除所有玩家的梦魇恐惧状态"""
+        room = self.room
+        for player in room.players.values():
+            player.skill.pop('feared_this_night', None)
+            player.skill.pop('feared_by', None)
+        room.skill.pop('wolf_forced_empty_knife', None)
 
     def ensure_half_blood_choices(self):
         room = self.room

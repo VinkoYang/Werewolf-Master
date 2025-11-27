@@ -31,12 +31,14 @@ from roles.idiot import Idiot
 from roles.half_blood import HalfBlood
 from roles.white_wolf_king import WhiteWolfKing
 from roles.nine_tailed_fox import NineTailedFox
+from roles.nightmare import Nightmare
 
 role_classes = {
     Role.CITIZEN: Citizen,
     Role.WOLF: Wolf,
     Role.WOLF_KING: WolfKing,
     Role.WHITE_WOLF_KING: WhiteWolfKing,
+    Role.NIGHTMARE: Nightmare,
     Role.SEER: Seer,
     Role.WITCH: Witch,
     Role.GUARD: Guard,
@@ -112,8 +114,8 @@ class Room(RoomRuntimeMixin):
                 user.seat = self._pick_available_seat(None)
                 seat_adjusted = True
             user.send_msg(f'你当前的号码牌：{user.seat}号')
-        if seat_adjusted:
-            self._mark_seat_state_dirty()
+        # 游戏开始后刷新所有玩家界面
+        self._mark_seat_state_dirty()
         await asyncio.sleep(3)
 
         if not self.logic_thread:
