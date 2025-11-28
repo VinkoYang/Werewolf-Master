@@ -135,7 +135,7 @@ class Wolf(RoleBase):
                 room.send_msg(f"{self.user.seat}号玩家选择放弃本夜击杀", nick=u.nick)
         
         # 再发送个人确认消息
-        self.user.send_msg('你今夜放弃选择击杀目标')
+        self.user.send_msg('你放弃选择')
         
         # 清理投票记录
         votes_map = room.skill.get('wolf_votes')

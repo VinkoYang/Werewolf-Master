@@ -749,6 +749,17 @@ async def main():
                 DAY_TIMER_STAGES = {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE, GameStage.BADGE_TRANSFER, GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH, GameStage.SPEECH}
                 COUNTDOWN_STAGES = NIGHT_STAGES | DAY_TIMER_STAGES
                 
+                NO_WAIT_ENFORCEMENT_STAGES = {
+                    GameStage.SHERIFF,
+                    GameStage.LAST_WORDS,
+                    GameStage.BADGE_TRANSFER,
+                    GameStage.EXILE_VOTE,
+                    GameStage.EXILE_PK_VOTE,
+                    GameStage.SPEECH,
+                    GameStage.EXILE_SPEECH,
+                    GameStage.EXILE_PK_SPEECH,
+                }
+
                 async def _countdown(user, seconds=20):
                     try:
                         for i in range(seconds, 0, -1):
@@ -769,14 +780,16 @@ async def main():
                         if skip_timeout:
                             return
 
+                        stage = getattr(user.room, 'stage', None)
                         room_waiting = getattr(user.room, 'waiting', False)
-                        if not room_waiting:
+                        allow_without_waiting = stage in NO_WAIT_ENFORCEMENT_STAGES
+                        if not allow_without_waiting and not room_waiting:
                             return
                         
                         try:
                             # 超时时，若玩家已做出临时选择则确认之；否则视为放弃并跳过
                             # 特殊处理：上警阶段
-                            if user.room.stage == GameStage.SHERIFF:
+                            if stage == GameStage.SHERIFF:
                                 sheriff_state_inner = getattr(user.room, 'sheriff_state', {})
                                 phase = sheriff_state_inner.get('phase')
                                 if phase == 'signup' and not user.skill.get('sheriff_voted', False):
@@ -790,7 +803,7 @@ async def main():
                                     user.nick == user.room.skill.get('sheriff_captain')
                                 ):
                                     user.room.force_sheriff_order_random()
-                            elif user.room.stage == GameStage.LAST_WORDS:
+                            elif stage == GameStage.LAST_WORDS:
                                 day_state_inner = getattr(user.room, 'day_state', {})
                                 current_last = day_state_inner.get('current_last_word')
                                 allow_speech = day_state_inner.get('last_words_allow_speech', True)
@@ -799,16 +812,16 @@ async def main():
                                         user.room.handle_last_word_skill_choice(user, '放弃')
                                     elif allow_speech and not user.skill.get('last_words_done', False):
                                         user.room.complete_last_word_speech(user)
-                            elif user.room.stage == GameStage.BADGE_TRANSFER:
+                            elif stage == GameStage.BADGE_TRANSFER:
                                 if user.nick == user.room.skill.get('sheriff_captain') and not user.skill.get('badge_action_taken', False):
                                     user.room.handle_sheriff_badge_action(user, 'destroy')
-                            elif user.room.stage in (GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE):
+                            elif stage in (GameStage.EXILE_VOTE, GameStage.EXILE_PK_VOTE):
                                 if user.skill.get('exile_vote_pending', False):
                                     user.room.record_exile_vote(user, '弃票')
-                            elif user.room.stage == GameStage.SPEECH:
+                            elif stage == GameStage.SPEECH:
                                 if getattr(user.room, 'current_speaker', None) == user.nick:
                                     user.room.advance_sheriff_speech(user.nick)
-                            elif user.room.stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
+                            elif stage in (GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH):
                                 if getattr(user.room, 'current_speaker', None) == user.nick:
                                     user.room.advance_exile_speech()
                             else:

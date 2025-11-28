@@ -48,9 +48,7 @@ python main.py
 2. 多平台的 Standalone executable
 3. 未对断线重连做支持 (等待 PyWebIO 支持)
 
-- 1. 上警报名倒计时
-2. 放逐投票进行中，请在10秒内完成选择
-3. 狼人选择放弃之后要收到”private：你放弃选择“ 的提示
+
 
 ## 待测试list
 - 测试双爆模式跨日竞选逻辑
@@ -603,3 +601,7 @@ room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩�
 - **操作体验强化**：`main.py` 的全局倒计时新增“狼美人魅惑倒计时”，并在玩家刷新或手动取消时妥善保留 `pending_charm`；`utils.async_sleep()` 现在在 PyWebIO 环境失效时会关闭协程，彻底消除 RuntimeWarning。
 - **殉情结算修复**：`models/runtime/daytime.py` 再次放逐狼美人时会查找其 `charm_target` 并立即令目标殉情（禁止猎人等技能），`presets/base.py` 的等待超时回调也会在结束阶段前驱动 confirm()/skip，防止刷新或倒计时任务被取消后漏结算。
 - **角色/文档同步**：`roles/wolf.py` 避免在魅惑阶段重复开启狼人投票 UI，`roles/seer.py`/`roles/*.py` 对狼美人对齐查验结果；`doc/roles.md` 与 README 身份介绍加入“狼美人夜里魅惑一人、若其被毒/梦/放逐或被猎人等射杀则魅惑对象殉情出局且无技能”的官方说明。
+
+## 2025-11-28 警上竞选倒计时补丁
+- In main.py the countdown timeout handler now whitelists all voting/action day stages (上警报名、警长投票/PK、徽章移交、遗言、放逐投票/PK 以及相关发言阶段). Even if room.waiting 已经是 False，这些阶段的 10s 倒计时结束后仍会触发原有的超时逻辑：上警报名自动记录“不上警”、警长竞选/PK 投票自动记“弃票”、放逐/PK 投票自动记“弃票”，徽章/遗言/发言阶段也能继续强制推进，避免计时停止后仍在等待玩家操作。
+- In wolf.py the放弃按钮和超时放弃都会给本人一条私聊“你放弃选择”，符合“Private: 你放弃选择”的提示要求，其他狼人仍然会收到该狼的状态广播。
