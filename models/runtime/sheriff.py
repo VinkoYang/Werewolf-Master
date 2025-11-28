@@ -6,6 +6,8 @@ import asyncio
 import random
 from typing import TYPE_CHECKING, Dict, List, Optional
 
+from utils import async_sleep
+
 from enums import GameStage, PlayerStatus, Role, SheriffBombRule
 from presets.base import WOLF_TEAM_ROLES
 
@@ -165,6 +167,8 @@ class SheriffFlowMixin:
         if not user or user.status != PlayerStatus.ALIVE:
             return False
         if user.role not in WOLF_TEAM_ROLES:
+            return False
+        if user.role == Role.WOLF_BEAUTY:
             return False
         if self.stage == GameStage.SPEECH:
             state = self.sheriff_state or {}
@@ -452,7 +456,7 @@ class SheriffFlowMixin:
 
     async def _deferred_withdraw_timer(self: 'Room', seconds: int) -> None:
         try:
-            await asyncio.sleep(seconds)
+            await async_sleep(seconds)
         except asyncio.CancelledError:
             return
         if self.sheriff_state.get('phase') == 'deferred_withdraw':

@@ -22,7 +22,7 @@ from models.lobby import prompt_room_creation, prompt_room_join, prompt_seat_sel
 from models.room import Room
 from models.user import User
 from models.system import Global
-from utils import add_cancel_button, get_interface_ip, make_scope_name
+from utils import add_cancel_button, get_interface_ip, make_scope_name, async_sleep
 
 # ==================== 接入外网：pyngrok ====================
 from pyngrok import ngrok
@@ -58,6 +58,7 @@ def get_global_countdown_context(room: Optional[Room]) -> Tuple[Optional[str], O
         GameStage.NIGHTMARE: '梦魇行动',
         GameStage.HALF_BLOOD: '混血儿认亲',
         GameStage.WOLF: '狼人行动',
+        GameStage.WOLF_BEAUTY: '狼美人魅惑',
         GameStage.SEER: '预言家查验',
         GameStage.WITCH: '女巫操作',
         GameStage.GUARD: '守卫行动',
@@ -219,9 +220,7 @@ async def main():
     @defer_call
     def on_close():
         User.free(current_user)
-        task = current_user.skill.pop('countdown_task', None)
-        if task:
-            task.cancel()
+        cancel_countdown(current_user, suppress_timeout=True)
         current_user.skill.pop('global_display_seen_key', None)
         current_user.skill.pop('global_display_idle', None)
 
@@ -233,9 +232,7 @@ async def main():
     seat_scope = make_scope_name('seat_panel', current_user.nick)
 
     def trigger_manual_refresh():
-        task = current_user.skill.pop('countdown_task', None)
-        if task:
-            task.cancel()
+        cancel_countdown(current_user, suppress_timeout=True)
         current_user.skill.pop('global_display_seen_key', None)
         current_user.skill.pop('global_display_idle', None)
         try:
@@ -246,6 +243,18 @@ async def main():
             })
         except Exception:
             pass
+
+    def cancel_countdown(user, *, cancel_task: bool = True, suppress_timeout: bool = False):
+        if suppress_timeout:
+            user.skill['countdown_skip_timeout'] = True
+        task = user.skill.pop('countdown_task', None)
+        user.skill.pop('countdown_stage', None)
+        if cancel_task and task:
+            try:
+                task.cancel()
+            except Exception:
+                pass
+        return task
 
     def render_room_widgets(active_room: Optional[Room]):
         with use_scope(message_scope, clear=True):
@@ -415,7 +424,7 @@ async def main():
 
         while True:
             try:
-                await asyncio.sleep(0.2)
+                await async_sleep(0.2)
             except (RuntimeError, asyncio.CancelledError):
                 # Refreshing the PyWebIO page may cancel the pending sleep; ignore and continue
                 continue
@@ -720,7 +729,7 @@ async def main():
                 continue
     
             if ops:
-                NIGHT_STAGES = {GameStage.HALF_BLOOD, GameStage.NIGHTMARE, GameStage.WOLF, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER}
+                NIGHT_STAGES = {GameStage.HALF_BLOOD, GameStage.NIGHTMARE, GameStage.WOLF, GameStage.WOLF_BEAUTY, GameStage.SEER, GameStage.WITCH, GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER}
                 # 夜间操作显示 20s 倒计时与确认键
                 if room.stage is not None:
                     # 仅在有玩家操作时（夜晚阶段）追加确认键
@@ -752,7 +761,7 @@ async def main():
                                 pass
     
                             try:
-                                await asyncio.sleep(1)
+                                await async_sleep(1)
                             except (RuntimeError, asyncio.CancelledError):
                                 break
     
@@ -803,7 +812,15 @@ async def main():
                                 if getattr(user.room, 'current_speaker', None) == user.nick:
                                     user.room.advance_exile_speech()
                             else:
-                                pending_keys = ['wolf_choice', 'pending_protect', 'pending_dream_target', 'pending_target', 'pending_half_blood_target', 'pending_fear']
+                                pending_keys = [
+                                    'wolf_choice',
+                                    'pending_charm',
+                                    'pending_protect',
+                                    'pending_dream_target',
+                                    'pending_target',
+                                    'pending_half_blood_target',
+                                    'pending_fear'
+                                ]
                                 has_pending = any(user.skill.get(k) for k in pending_keys)
     
                                 if user.role_instance and user.role_instance.needs_global_confirm and hasattr(user.role_instance, 'confirm'):
@@ -831,7 +848,7 @@ async def main():
                         except Exception:
                             pass
                     finally:
-                        user.skill.pop('countdown_task', None)
+                        cancel_countdown(user, cancel_task=False)
     
                         # 清理倒计时显示（操作窗口内）
                         try:
@@ -845,6 +862,13 @@ async def main():
                 except Exception:
                     is_countdown_stage = False
     
+                existing_task = current_user.skill.get('countdown_task')
+                if existing_task:
+                    existing_stage = current_user.skill.get('countdown_stage')
+                    task_finished = hasattr(existing_task, 'done') and existing_task.done()
+                    if task_finished or (existing_stage is not None and existing_stage != room.stage):
+                        cancel_countdown(current_user, suppress_timeout=True)
+
                 if current_user.skill.get('countdown_task') is None and is_countdown_stage:
                     try:
                         should_start = False
@@ -916,25 +940,36 @@ async def main():
                                 current_user.skill['countdown_skip_timeout'] = False
                             task = asyncio.create_task(_countdown(current_user, seconds))
                             current_user.skill['countdown_task'] = task
+                            current_user.skill['countdown_stage'] = room.stage
                     except Exception:
                         pass
     
+                data = None
                 current_user.input_blocking = True
-                with use_scope('input_group', clear=True):  # 替换 clear('input_group')
-                    # 在操作窗口内创建单行倒计时显示 scope（仅在夜间阶段或上警阶段且玩家可行动时）
-                    try:
-                        if is_countdown_stage:
-                            # 在 input_group scope 内创建一个可更新的子 scope 占位符，保证其显示在操作窗口内
-                            try:
-                                with use_scope(make_scope_name('input_countdown', current_user.nick), clear=True):
+                try:
+                    with use_scope('input_group', clear=True):  # 替换 clear('input_group')
+                        # 在操作窗口内创建单行倒计时显示 scope（仅在夜间阶段或上警阶段且玩家可行动时）
+                        try:
+                            if is_countdown_stage:
+                                # 在 input_group scope 内创建一个可更新的子 scope 占位符，保证其显示在操作窗口内
+                                try:
+                                    with use_scope(make_scope_name('input_countdown', current_user.nick), clear=True):
+                                        pass
+                                except Exception:
                                     pass
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-    
-                    data = await input_group('行动', inputs=ops, cancelable=True)
-                current_user.input_blocking = False
+                        except Exception:
+                            pass
+
+                        data = await input_group('行动', inputs=ops, cancelable=True)
+                except TypeError as exc:
+                    error_text = str(exc)
+                    if 'NoneType' in error_text and 'subscriptable' in error_text:
+                        logger.warning('Input group aborted due to missing client event; treating as cancel. %s', exc)
+                        data = None
+                    else:
+                        raise
+                finally:
+                    current_user.input_blocking = False
     
                 # 如果用户按下确认键，取消倒计时并调用角色确认方法（若存在）
                 if data and data.get('confirm_action'):
@@ -943,12 +978,8 @@ async def main():
                         current_user.role_instance and
                         current_user.role_instance.can_act_at_night
                     )
-                    task = current_user.skill.get('countdown_task')
-                    if task and not preserve_night_countdown:
-                        current_user.skill.pop('countdown_task', None)
-                        task.cancel()
-                    elif not preserve_night_countdown:
-                        current_user.skill.pop('countdown_task', None)
+                    if not preserve_night_countdown:
+                        cancel_countdown(current_user, suppress_timeout=True)
                     # 夜间阶段需要保持倒计时持续运行，不清理显示
                     if not preserve_night_countdown:
                         try:
@@ -964,7 +995,7 @@ async def main():
                             current_user.send_msg(f'确认失败: {e}')
                     # 跳过后续动作处理（confirm 已处理）
                     try:
-                        await asyncio.sleep(0.1)
+                        await async_sleep(0.1)
                     except (RuntimeError, asyncio.CancelledError):
                         pass
                     continue
@@ -988,9 +1019,7 @@ async def main():
     
             control_action = data.get('room_control')
             if control_action == 'leave_room':
-                task = current_user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
+                cancel_countdown(current_user, suppress_timeout=True)
                 try:
                     room.remove_player(current_user)
                 except Exception:
@@ -1001,9 +1030,7 @@ async def main():
                 clear_room_widgets()
                 break
             if control_action == 'stand_up':
-                task = current_user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
+                cancel_countdown(current_user, suppress_timeout=True)
                 await handle_seat_change()
                 continue
     
@@ -1077,9 +1104,7 @@ async def main():
             if data.get('sheriff_vote'):
                 room.record_sheriff_choice(current_user, data.get('sheriff_vote'))
                 # 取消倒计时
-                task = current_user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
+                cancel_countdown(current_user, suppress_timeout=True)
                 # 不需要skip，直接继续循环刷新界面
     
             if data.get('sheriff_withdraw'):
@@ -1091,9 +1116,7 @@ async def main():
                 selection = data.get('sheriff_ballot')
                 target = '弃票' if selection == '弃票' else selection.split('.', 1)[-1].strip()
                 room.record_sheriff_ballot(current_user, target)
-                task = current_user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
+                cancel_countdown(current_user, suppress_timeout=True)
     
             if data.get('sheriff_set_order'):
                 msg = room.set_sheriff_order(current_user, data.get('sheriff_set_order'))
@@ -1102,15 +1125,11 @@ async def main():
     
             if data.get('last_word_skill'):
                 room.handle_last_word_skill_choice(current_user, data.get('last_word_skill'))
-                task = current_user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
+                cancel_countdown(current_user, suppress_timeout=True)
     
             if data.get('last_word_done'):
                 room.complete_last_word_speech(current_user)
-                task = current_user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
+                cancel_countdown(current_user, suppress_timeout=True)
     
             if data.get('idiot_badge_transfer'):
                 msg = room.handle_idiot_badge_transfer(current_user, data.get('idiot_badge_transfer'))
@@ -1121,35 +1140,27 @@ async def main():
                 msg = room.handle_sheriff_badge_action(current_user, data.get('sheriff_badge_action'))
                 if msg:
                     current_user.send_msg(msg)
-                task = current_user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
+                cancel_countdown(current_user, suppress_timeout=True)
     
             if data.get('exile_vote'):
                 selection = data.get('exile_vote')
                 target = '弃票' if selection == '弃票' else selection.split('.', 1)[-1].strip()
                 room.record_exile_vote(current_user, target)
-                task = current_user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
+                cancel_countdown(current_user, suppress_timeout=True)
     
             if data.get('wolf_self_bomb'):
                 msg = room.handle_wolf_self_bomb(current_user)
                 if msg:
                     current_user.send_msg(msg)
-                task = current_user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
+                cancel_countdown(current_user, suppress_timeout=True)
                 try:
-                    await asyncio.sleep(0.3)
+                    await async_sleep(0.3)
                 except (RuntimeError, asyncio.CancelledError):
                     pass
                 continue
     
             if data.get('speech_done') and current_user.nick == room.current_speaker:
-                task = current_user.skill.pop('countdown_task', None)
-                if task:
-                    task.cancel()
+                cancel_countdown(current_user, suppress_timeout=True)
                 current_user.skip(reason='speech_done')
                 if room.stage == GameStage.SPEECH:
                     room.advance_sheriff_speech(current_user.nick)
@@ -1158,7 +1169,7 @@ async def main():
     
             # 防止按钮闪烁
             try:
-                await asyncio.sleep(0.3)
+                await async_sleep(0.3)
             except (RuntimeError, asyncio.CancelledError):
                 pass
     

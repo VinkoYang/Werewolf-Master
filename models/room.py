@@ -15,7 +15,7 @@ from presets.game_config_registry import resolve_game_config_class
 from models.system import Global, Config
 from models.user import User
 from models.room_runtime import RoomRuntimeMixin
-from utils import say
+from utils import say, async_sleep
 from . import logger
 
 # ---------- 角色类 ----------
@@ -32,6 +32,7 @@ from roles.half_blood import HalfBlood
 from roles.white_wolf_king import WhiteWolfKing
 from roles.nine_tailed_fox import NineTailedFox
 from roles.nightmare import Nightmare
+from roles.wolf_beauty import WolfBeauty
 
 role_classes = {
     Role.CITIZEN: Citizen,
@@ -39,6 +40,7 @@ role_classes = {
     Role.WOLF_KING: WolfKing,
     Role.WHITE_WOLF_KING: WhiteWolfKing,
     Role.NIGHTMARE: Nightmare,
+    Role.WOLF_BEAUTY: WolfBeauty,
     Role.SEER: Seer,
     Role.WITCH: Witch,
     Role.GUARD: Guard,
@@ -94,7 +96,7 @@ class Room(RoomRuntimeMixin):
         # 在游戏开始时添加公共隔断，提升可读性
         self.broadcast_msg('=' * 22)
         self.broadcast_msg("游戏开始！身份发放中...", tts=True)
-        await asyncio.sleep(2)
+        await async_sleep(2)
 
         random.shuffle(self.roles_pool)
         for user in self.players.values():
@@ -116,7 +118,7 @@ class Room(RoomRuntimeMixin):
             user.send_msg(f'你当前的号码牌：{user.seat}号')
         # 游戏开始后刷新所有玩家界面
         self._mark_seat_state_dirty()
-        await asyncio.sleep(3)
+        await async_sleep(3)
 
         if not self.logic_thread:
             self.logic_thread = run_async(self.game_loop())

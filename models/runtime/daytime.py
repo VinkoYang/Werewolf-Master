@@ -7,6 +7,7 @@ import random
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from enums import GameStage, PlayerStatus, Role
+from roles.wolf_beauty import WolfBeauty
 
 if TYPE_CHECKING:  # pragma: no cover - typing helpers only
     from models.user import User
@@ -746,17 +747,33 @@ class DaytimeFlowMixin:
 
     def _finalize_day_execution(self: 'Room') -> None:
         day_deaths = self.day_state.get('day_deaths')
+        extra_charmed: List[str] = []
         if day_deaths:
             for nick in day_deaths:
                 player = self.players.get(nick)
                 if player:
                     player.status = PlayerStatus.DEAD
+                    # 处理狼美人殉情
+                    if player.role == Role.WOLF_BEAUTY:
+                        charmed = WolfBeauty.handle_wolf_beauty_death(self, player)
+                        if charmed:
+                            extra_charmed.append(charmed)
         else:
             exec_target = self.day_state.get('pending_execution')
             if exec_target:
                 player = self.players.get(exec_target)
                 if player:
                     player.status = PlayerStatus.DEAD
+                    if player.role == Role.WOLF_BEAUTY:
+                        charmed = WolfBeauty.handle_wolf_beauty_death(self, player)
+                        if charmed:
+                            extra_charmed.append(charmed)
+
+        if extra_charmed:
+            day_deaths = self.day_state.setdefault('day_deaths', [])
+            for nick in extra_charmed:
+                if nick not in day_deaths:
+                    day_deaths.append(nick)
         self.update_nine_tailed_state()
         self.end_day_phase()
         self._schedule_victory_check()

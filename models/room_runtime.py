@@ -8,6 +8,7 @@ from enums import Role, PlayerStatus
 from presets.base import WOLF_TEAM_ROLES, BaseGameConfig
 from presets.game_config_registry import resolve_game_config_class
 from roles.nine_tailed_fox import NineTailedFox
+from roles.wolf_beauty import WolfBeauty
 from models.runtime.daytime import DaytimeFlowMixin
 from models.runtime.sheriff import SheriffFlowMixin
 from models.runtime.tools import VoteTimer, BadgeTransferTimer
@@ -82,6 +83,9 @@ class RoomRuntimeMixin(SheriffFlowMixin, DaytimeFlowMixin):
         self.broadcast_msg(f"{nick} 被投票出局", tts=True)
         if player.role in (Role.HUNTER, Role.WOLF_KING) and player.skill.get('can_shoot', False):
             player.send_msg('你被投票出局，立即开枪！')
+        # 处理狼美人殉情
+        if player.role == Role.WOLF_BEAUTY:
+            WolfBeauty.handle_wolf_beauty_death(self, player)
         self.update_nine_tailed_state()
 
     def _format_label(self, nick: str) -> str:

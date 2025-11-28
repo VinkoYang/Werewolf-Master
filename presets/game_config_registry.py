@@ -17,6 +17,7 @@ from .game_config_wolf_king_guard import PRESET_METADATA as WKG_METADATA
 from .game_config_wolf_king_dreamer import PRESET_METADATA as WKD_METADATA
 from .game_config_nine_tailed_fox import PRESET_METADATA as FOX_METADATA
 from .game_config_nightmare import PRESET_METADATA as NIGHTMARE_METADATA
+from .game_config_wolf_beauty import PRESET_METADATA as WOLF_BEAUTY_METADATA
 
 MetadataDict = Dict[str, object]
 
@@ -36,7 +37,7 @@ def _build_room_template(counter: Counter) -> Dict[str, object]:
     })
 
     god_wolf_bucket: List[str] = template['god_wolf']  # type: ignore[assignment]
-    for special in (Role.WOLF_KING, Role.WHITE_WOLF_KING, Role.NIGHTMARE):
+    for special in (Role.WOLF_KING, Role.WHITE_WOLF_KING, Role.NIGHTMARE, Role.WOLF_BEAUTY):
         _append_role_entries(god_wolf_bucket, counter, special)
 
     god_citizen_bucket: List[str] = template['god_citizen']  # type: ignore[assignment]
@@ -72,6 +73,7 @@ _SPECIAL_CONFIGS: List[MetadataDict] = [
     _hydrate_descriptor(WKD_METADATA),
     _hydrate_descriptor(FOX_METADATA),
     _hydrate_descriptor(NIGHTMARE_METADATA),
+    _hydrate_descriptor(WOLF_BEAUTY_METADATA),
 ]
 
 

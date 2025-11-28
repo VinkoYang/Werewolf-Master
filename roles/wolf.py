@@ -4,7 +4,7 @@ from pywebio.input import actions
 from .base import RoleBase, player_action
 from enums import GameStage, PlayerStatus, Role
 
-WOLF_ROLES = (Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING, Role.NIGHTMARE)
+WOLF_ROLES = (Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING, Role.NIGHTMARE, Role.WOLF_BEAUTY)
 
 class Wolf(RoleBase):
     name = '狼人'
@@ -59,10 +59,14 @@ class Wolf(RoleBase):
         for u in players:
             label = f"{u.seat}. {u.nick}"
             disabled = (u.status == PlayerStatus.DEAD)
+            if u.role == Role.WOLF_BEAUTY:
+                disabled = True
             btn = {'label': label, 'value': label}
             if disabled:
                 btn['disabled'] = True
                 btn['color'] = 'secondary'
+                if u.role == Role.WOLF_BEAUTY:
+                    btn['label'] = f"{label}（狼美人不可被刀）"
             elif self.user.nick in wolf_votes.get(u.nick, []):
                 btn['color'] = 'warning'
             # 如果该玩家已被其他狼人确认选择，标记为危险色
@@ -180,6 +184,8 @@ class Wolf(RoleBase):
             return '查无此人'
         if target_user.status == PlayerStatus.DEAD:
             return '目标已死亡'
+        if target_user.role == Role.WOLF_BEAUTY:
+            return '狼美人不可成为狼队刀口'
 
         votes_map = room.skill.setdefault('wolf_votes', {})
         # 移除此前的投票以避免重复计数
