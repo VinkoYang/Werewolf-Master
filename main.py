@@ -232,6 +232,7 @@ async def main():
     seat_scope = make_scope_name('seat_panel', current_user.nick)
 
     def trigger_manual_refresh():
+        current_user.skill['manual_refreshing'] = True
         cancel_countdown(current_user, suppress_timeout=True)
         current_user.skill.pop('global_display_seen_key', None)
         current_user.skill.pop('global_display_idle', None)
@@ -1021,7 +1022,9 @@ async def main():
                         put_html('')
                 except Exception:
                     pass
-                
+                refresh_requested = current_user.skill.pop('manual_refreshing', False)
+                if refresh_requested:
+                    continue
                 if room.stage == GameStage.SHERIFF:
                     phase = sheriff_state.get('phase') if sheriff_state else None
                     if phase in ('vote', 'pk_vote') and current_user.skill.get('sheriff_vote_pending', False):

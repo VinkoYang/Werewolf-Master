@@ -607,10 +607,16 @@ class SheriffFlowMixin:
             self.finish_sheriff_phase(None)
             return
 
+        phase = state.get('phase')
         max_votes = max(tally.values())
+        if max_votes == 0:
+            label = 'PK投票' if phase == 'pk_vote' else '警长投票'
+            self.broadcast_msg(f'{label}无人得票，警徽流失')
+            self.finish_sheriff_phase(None)
+            return
+
         winners = [nick for nick, count in tally.items() if count == max_votes]
 
-        phase = state.get('phase')
         if phase == 'vote':
             if len(winners) == 1:
                 self._declare_sheriff(winners[0])
