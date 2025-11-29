@@ -287,12 +287,13 @@ class DaytimeFlowMixin:
             self.day_state['sheriff_order_pending'] = True
             return
 
-        queue, start_player, direction = self._random_queue_without_sheriff()
+        queue, announce_msg = self._auto_queue_without_sheriff()
         if queue:
-            label = '顺序发言' if direction == 'asc' else '逆序发言'
-            start_label = self._format_label(start_player.nick) if start_player else '首位玩家'
             self.day_state['sheriff_order_pending'] = False
-            self.broadcast_msg(f'当前没有警长，系统随机选择{label}，{start_label}请发言')
+            if announce_msg:
+                self.broadcast_msg(announce_msg)
+            first = queue[0]
+            self.broadcast_msg(f'{self._format_label(first)}请发言')
             self.start_exile_speech(queue=queue, announce=False)
         else:
             self.broadcast_msg('当前无可发言玩家，直接进入放逐投票')
@@ -313,7 +314,7 @@ class DaytimeFlowMixin:
         if not direction:
             return '无效发言顺序'
 
-        queue = self._build_directional_queue(direction)
+        queue = self._build_sheriff_queue(direction)
         self.day_state['sheriff_order_pending'] = False
         if queue:
             self.start_exile_speech(queue=queue, announce=False)
@@ -339,15 +340,6 @@ class DaytimeFlowMixin:
         self.broadcast_msg(f'{self._format_label(captain_nick)}超时未选择发言顺序，系统自动{choice}')
         self.set_sheriff_order(captain, choice, auto=True)
 
-    def _random_queue_without_sheriff(self: 'Room') -> tuple[List[str], Optional['User'], Optional[str]]:
-        alive = self.list_alive_players()
-        if not alive:
-            return [], None, None
-        start_player = random.choice(alive)
-        direction = random.choice(['asc', 'desc'])
-        queue = self._build_queue_from_player(start_player.nick, direction)
-        return queue, start_player, direction
-
     def _build_queue_from_player(self: 'Room', start_nick: str, direction: str) -> List[str]:
         alive = sorted(self.list_alive_players(), key=lambda u: u.seat or 0)
         if not alive:
@@ -369,6 +361,100 @@ class DaytimeFlowMixin:
         if direction == 'desc':
             alive = list(reversed(alive))
         return [player.nick for player in alive]
+
+    def _seat_capacity(self: 'Room') -> int:
+        roles = getattr(self, 'roles', None)
+        if roles:
+            return len(roles)
+        seats = [u.seat for u in self.players.values() if u.seat]
+        return max(seats) if seats else 12
+
+    def _step_seat(self: 'Room', seat: int, direction: str, capacity: int) -> int:
+        if capacity <= 0:
+            return seat
+        if direction == 'desc':
+            return (seat - 2) % capacity + 1
+        return seat % capacity + 1
+
+    def _build_queue_from_anchor_seat(self: 'Room', anchor_seat: Optional[int], direction: str) -> List[str]:
+        if not anchor_seat:
+            return self._build_directional_queue(direction)
+        alive_map = {u.seat: u.nick for u in self.list_alive_players() if u.seat}
+        if not alive_map:
+            return []
+        capacity = self._seat_capacity()
+        queue: List[str] = []
+        steps = 0
+        seat_cursor = anchor_seat
+        while len(queue) < len(alive_map) and steps < capacity:
+            seat_cursor = self._step_seat(seat_cursor, direction, capacity)
+            steps += 1
+            nick = alive_map.get(seat_cursor)
+            if nick and nick not in queue:
+                queue.append(nick)
+        if len(queue) < len(alive_map):
+            fallback = self._build_directional_queue(direction)
+            for nick in fallback:
+                if nick not in queue:
+                    queue.append(nick)
+        return queue
+
+    def _auto_queue_without_sheriff(self: 'Room') -> tuple[List[str], Optional[str]]:
+        state = self.day_state or {}
+        deaths = state.get('night_deaths', [])
+        dir_to_label = {'asc': '顺序', 'desc': '逆序'}
+
+        if len(deaths) == 1:
+            anchor_player = self.players.get(deaths[0])
+            anchor_seat = anchor_player.seat if anchor_player else None
+            direction = random.choice(['asc', 'desc'])
+            queue = self._build_queue_from_anchor_seat(anchor_seat, direction)
+            if queue:
+                anchor_label = self._format_label(deaths[0])
+                msg = f'当前没有警长，系统随机选择从{anchor_label}的{dir_to_label[direction]}方向开始'
+                return queue, msg
+
+        direction = random.choice(['asc', 'desc'])
+        alive_players = self.list_alive_players()
+        if alive_players:
+            start_player = random.choice(alive_players)
+            queue = self._build_queue_from_player(start_player.nick, direction)
+        else:
+            queue = []
+
+        if not queue:
+            queue = self._build_directional_queue(direction)
+            start_label = None
+        else:
+            start_label = self._format_label(start_player.nick)
+
+        if queue:
+            if start_label:
+                msg = f'当前没有警长，系统随机指定{dir_to_label[direction]}发言顺序，由{start_label}起头'
+            else:
+                msg = f'当前没有警长，系统随机指定{dir_to_label[direction]}发言顺序'
+            return queue, msg
+        return [], None
+
+    def _build_sheriff_queue(self: 'Room', direction: str) -> List[str]:
+        state = self.day_state or {}
+        deaths = state.get('night_deaths', [])
+        if len(deaths) == 1:
+            anchor_player = self.players.get(deaths[0])
+            anchor_seat = anchor_player.seat if anchor_player else None
+            return self._build_queue_from_anchor_seat(anchor_seat, direction)
+
+        captain = self.skill.get('sheriff_captain')
+        if not captain:
+            return self._build_directional_queue(direction)
+
+        queue = self._build_queue_from_player(captain, direction)
+        if not queue:
+            return []
+        if captain in queue:
+            queue = [nick for nick in queue if nick != captain]
+        queue.append(captain)
+        return queue
 
     def _rotate_players(self: 'Room', players: List['User'], start_idx: int, step: int) -> List['User']:
         if not players:
