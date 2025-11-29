@@ -28,6 +28,7 @@ class GameStage(Enum):
     HALF_BLOOD = '混血儿'
     NIGHTMARE = '梦魇'          # 梦魇阶段（先于狼人行动）
     WOLF = '狼人'
+    WOLF_BEAUTY = '狼美人'       # 狼美人阶段（魅惑，在狼人行动后）
     SEER = '预言家'
     WITCH = '女巫'
     GUARD = '守卫'
@@ -51,6 +52,7 @@ class Role(PlainEnum):
     WOLF_KING = '狼王'
     WHITE_WOLF_KING = '白狼王'
     NIGHTMARE = '梦魇'
+    WOLF_BEAUTY = '狼美人'
     SEER = '预言家'
     WITCH = '女巫'
     GUARD = '守卫'
@@ -91,6 +93,7 @@ class Role(PlainEnum):
             '狼王': cls.WOLF_KING,
             '白狼王': cls.WHITE_WOLF_KING,
             '梦魇': cls.NIGHTMARE,
+            '狼美人': cls.WOLF_BEAUTY,
         }
 
     @classmethod

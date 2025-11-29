@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable, Optional
 
+from utils import async_sleep
+
 
 AsyncCallback = Callable[[], Awaitable[None]]
 
@@ -24,7 +26,7 @@ class AsyncTimer:
 
     async def _run(self, seconds: int, callback: AsyncCallback) -> None:
         try:
-            await asyncio.sleep(seconds)
+            await async_sleep(seconds)
         except asyncio.CancelledError:
             return
         await callback()

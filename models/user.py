@@ -1,5 +1,4 @@
 # models/user.py
-import asyncio
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING, Any
 
@@ -12,6 +11,7 @@ from enums import Role, PlayerStatus, LogCtrl
 from models.system import Config, Global
 from stub import OutputHandler
 from . import logger
+from utils import async_sleep
 
 if TYPE_CHECKING:
     from .room import Room
@@ -81,7 +81,7 @@ class User:
             if len(self.room.log) > 50000:
                 self.room.log = self.room.log[len(self.room.log)//2:]
             last_idx = len(self.room.log)
-            await asyncio.sleep(0.2)
+            await async_sleep(0.2)
 
     def start_syncer(self):
         if self.game_msg_syncer: raise AssertionError
