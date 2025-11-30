@@ -529,6 +529,8 @@ class SheriffFlowMixin:
                 player.skill['sheriff_vote_pending'] = True
 
         self.broadcast_msg(prompt)
+        if prompt == '不上警玩家请在10秒内完成投票':
+            self.broadcast_msg('请投票', tts=True)
         if not eligible:
             self.finish_sheriff_vote()
             return None

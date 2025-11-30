@@ -11,8 +11,12 @@ from utils import async_sleep
 
 if TYPE_CHECKING:
     from models.room import Room
+    from models.user import User
 
 WOLF_TEAM_ROLES = {Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING, Role.NIGHTMARE, Role.WOLF_BEAUTY}
+GOD_ROLES = {Role.SEER, Role.WITCH, Role.GUARD, Role.HUNTER, Role.DREAMER, Role.IDIOT}
+VILLAGER_ROLES = {Role.CITIZEN, Role.HALF_BLOOD}
+THIRD_PARTY_ROLES = {Role.NINE_TAILED_FOX}
 NIGHT_WAIT_STAGES = {
     GameStage.HALF_BLOOD,
     GameStage.NIGHTMARE,
@@ -145,7 +149,7 @@ class DefaultGameFlow(BaseGameConfig):
         # 清除梦魇的恐惧效果
         self._clear_nightmare_fear_effects()
         
-        room.broadcast_msg('天亮请睁眼', tts=True)
+        room.broadcast_msg('天亮了', tts=True)
         await async_sleep(2)
         needs_sheriff_phase = False
         if not room.sheriff_badge_destroyed:
@@ -160,7 +164,7 @@ class DefaultGameFlow(BaseGameConfig):
                 room.broadcast_msg('继续未完成的警长竞选', tts=True)
                 room.resume_deferred_sheriff_phase()
             else:
-                room.broadcast_msg('进行警上竞选', tts=True)
+                room.broadcast_msg('上警的玩家请举手', tts=True)
                 room.init_sheriff_phase()
             while room.sheriff_state.get('phase') != 'done':
                 await async_sleep(0.5)
@@ -463,17 +467,61 @@ class DefaultGameFlow(BaseGameConfig):
     async def check_game_end(self):
         room = self.room
         alive = room.list_alive_players()
-        wolves = [u for u in alive if u.role in WOLF_TEAM_ROLES]
-        goods = [u for u in alive if u.role not in WOLF_TEAM_ROLES]
-        half_bloods = [u for u in goods if u.role == Role.HALF_BLOOD]
-        for hb in half_bloods:
-            if hb.skill.get('half_blood_camp', 'good') == 'wolf':
-                goods = [g for g in goods if g.nick != hb.nick]
-                wolves.append(hb)
-        if not wolves:
+
+        initial_god_present = any(p.role in GOD_ROLES for p in room.players.values())
+        initial_villager_present = any(p.role in VILLAGER_ROLES for p in room.players.values())
+        initial_third_present = any(p.role in THIRD_PARTY_ROLES for p in room.players.values())
+
+        wolves: List['User'] = []
+        goods: List['User'] = []
+        third_party: List['User'] = []
+        alive_gods: List['User'] = []
+        alive_villagers: List['User'] = []
+
+        for user in alive:
+            role = user.role
+            if role is None:
+                continue
+            if role == Role.HALF_BLOOD and user.skill.get('half_blood_camp', 'good') == 'wolf':
+                wolves.append(user)
+                continue
+            if role in WOLF_TEAM_ROLES:
+                wolves.append(user)
+                continue
+            if role in THIRD_PARTY_ROLES:
+                third_party.append(user)
+                continue
+            goods.append(user)
+            if role in GOD_ROLES:
+                alive_gods.append(user)
+            if role in VILLAGER_ROLES:
+                alive_villagers.append(user)
+
+        third_alive = bool(third_party)
+        wolf_border_met = False
+        if initial_god_present and not alive_gods:
+            wolf_border_met = True
+        if initial_villager_present and not alive_villagers:
+            wolf_border_met = True
+
+        wolf_win = False
+        good_win = False
+        third_win = False
+
+        if initial_third_present:
+            wolf_win = wolf_border_met and not third_alive
+            good_win = (not wolves) and not third_alive
+            third_win = third_alive and not wolves and not goods
+        else:
+            wolf_win = wolf_border_met
+            good_win = not wolves
+
+        if wolf_win:
+            await self.end_game("狼人阵营获胜！完成屠边")
+        elif third_win:
+            await self.end_game("第三方阵营获胜！完成屠城")
+        elif good_win:
             await self.end_game("好人阵营获胜！狼人全部出局")
-        elif len(wolves) >= len(goods):
-            await self.end_game("狼人阵营获胜！好人被屠光")
 
     async def end_game(self, reason: str):
         room = self.room

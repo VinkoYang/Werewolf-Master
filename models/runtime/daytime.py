@@ -45,7 +45,7 @@ class DaytimeFlowMixin:
         else:
             self.day_state['pending_announcement_broadcast'] = False
             if announce:
-                self.broadcast_msg('请房主公布昨夜信息')
+                self.broadcast_msg('等待房主公布昨夜信息', tts=True)
         if has_pending_day_bombs:
             self._trigger_pending_day_bomb_flow()
 
@@ -835,7 +835,7 @@ class DaytimeFlowMixin:
         self.stage = GameStage.Day
         self.day_state['phase'] = 'announcement'
         if self.day_state.pop('pending_announcement_broadcast', False):
-            self.broadcast_msg('请房主公布昨夜信息')
+            self.broadcast_msg('等待房主公布昨夜信息', tts=True)
 
     def handle_sheriff_badge_action(self: 'Room', user: 'User', choice: str) -> Optional[str]:
         current = self.skill.get('sheriff_captain')
