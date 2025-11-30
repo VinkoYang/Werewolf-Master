@@ -151,7 +151,7 @@ apply_dreamer_logic()：处理摄梦人（免疫/连续死亡，使用utils.rand
 投票（host_vote_op → room.vote_kill(nick)）：设置DEAD，检查猎人开枪（未完整）。
 
 消息和广播（room.py）：
-broadcast_msg(text, tts)：log.append((SYS_NICK, text))，utils.say(tts)。
+broadcast_msg(text, tts)：log.append((SYS_NICK, {'text': text, 'tts': True}))，浏览器端根据 tts 标记调用 Web Speech API 播放语音。
 send_msg(text, nick)：log.append((nick, text))。
 broadcast_log_ctrl(ctrl)：log.append((None, ctrl))，如RemoveInput取消输入。
 

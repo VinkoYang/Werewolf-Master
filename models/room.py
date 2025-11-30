@@ -15,7 +15,7 @@ from presets.game_config_registry import resolve_game_config_class
 from models.system import Global, Config
 from models.user import User
 from models.room_runtime import RoomRuntimeMixin
-from utils import say, async_sleep
+from utils import async_sleep
 from . import logger
 
 # ---------- 角色类 ----------
@@ -66,7 +66,7 @@ class Room(RoomRuntimeMixin):
     round: int = 0
     stage: Optional[GameStage] = None
     waiting: bool = False
-    log: List[Tuple[Union[str, None], Union[str, LogCtrl]]] = field(default_factory=list)
+    log: List[Tuple[Union[str, None], Union[str, LogCtrl, Dict[str, Any]]]] = field(default_factory=list)
     skill: Dict[str, Any] = field(default_factory=dict)
 
     logic_thread: Optional[TaskHandler] = None
@@ -164,8 +164,10 @@ class Room(RoomRuntimeMixin):
 
     def broadcast_msg(self, text: str, tts: bool = False):
         if tts:
-            say(text)
-        self.log.append((Config.SYS_NICK, text))
+            payload: Union[str, Dict[str, Any]] = {'text': text, 'tts': True}
+        else:
+            payload = text
+        self.log.append((Config.SYS_NICK, payload))
 
     def desc(self) -> str:
         return f'房间号 {self.id}，需要玩家 {len(self.roles)} 人，人员配置：{dict(Counter(self.roles))}'
