@@ -37,6 +37,7 @@ class DaytimeFlowMixin:
             'sheriff_order_pending': False,
             'pending_badge_followup': None,
             'pending_announcement_broadcast': False,
+            'sheriff_call_target': None,
         }
         has_pending_day_bombs = bool(self.skill.get('pending_day_bombs'))
         if has_pending_day_bombs and announce:
@@ -287,12 +288,13 @@ class DaytimeFlowMixin:
             self.day_state['sheriff_order_pending'] = True
             return
 
-        queue, start_player, direction = self._random_queue_without_sheriff()
+        queue, announce_msg = self._auto_queue_without_sheriff()
         if queue:
-            label = '顺序发言' if direction == 'asc' else '逆序发言'
-            start_label = self._format_label(start_player.nick) if start_player else '首位玩家'
             self.day_state['sheriff_order_pending'] = False
-            self.broadcast_msg(f'当前没有警长，系统随机选择{label}，{start_label}请发言')
+            if announce_msg:
+                self.broadcast_msg(announce_msg)
+            first = queue[0]
+            self.broadcast_msg(f'{self._format_label(first)}请发言')
             self.start_exile_speech(queue=queue, announce=False)
         else:
             self.broadcast_msg('当前无可发言玩家，直接进入放逐投票')
@@ -313,7 +315,7 @@ class DaytimeFlowMixin:
         if not direction:
             return '无效发言顺序'
 
-        queue = self._build_directional_queue(direction)
+        queue = self._build_sheriff_queue(direction)
         self.day_state['sheriff_order_pending'] = False
         if queue:
             self.start_exile_speech(queue=queue, announce=False)
@@ -339,14 +341,40 @@ class DaytimeFlowMixin:
         self.broadcast_msg(f'{self._format_label(captain_nick)}超时未选择发言顺序，系统自动{choice}')
         self.set_sheriff_order(captain, choice, auto=True)
 
-    def _random_queue_without_sheriff(self: 'Room') -> tuple[List[str], Optional['User'], Optional[str]]:
-        alive = self.list_alive_players()
-        if not alive:
-            return [], None, None
-        start_player = random.choice(alive)
-        direction = random.choice(['asc', 'desc'])
-        queue = self._build_queue_from_player(start_player.nick, direction)
-        return queue, start_player, direction
+    def set_sheriff_call_target(self: 'Room', user: 'User', target: Optional[str]) -> Optional[str]:
+        captain = self.skill.get('sheriff_captain')
+        if user.nick != captain or not self._is_alive(user.nick):
+            return '只有在场警长可以归票'
+        phase = (self.day_state or {}).get('phase')
+        allowed = {
+            'exile_speech',
+            'await_exile_vote',
+            'exile_vote',
+            'exile_pk_speech',
+            'await_exile_pk_vote',
+            'exile_pk_vote'
+        }
+        if phase not in allowed:
+            return '当前阶段不可归票'
+
+        if not target or target == 'clear':
+            if self.day_state.get('sheriff_call_target'):
+                self.day_state['sheriff_call_target'] = None
+                self.broadcast_msg(f'{self._format_label(user.nick)}收回归票声明。')
+            else:
+                self.day_state['sheriff_call_target'] = None
+            return None
+
+        if target == user.nick:
+            return '不可归票自己'
+        if not self._is_alive(target):
+            return '目标玩家无效'
+
+        self.day_state['sheriff_call_target'] = target
+        self.broadcast_msg(
+            f'{self._format_label(user.nick)}归票{self._format_label(target)}，若本轮放逐投票命中则计 1.5 票。'
+        )
+        return None
 
     def _build_queue_from_player(self: 'Room', start_nick: str, direction: str) -> List[str]:
         alive = sorted(self.list_alive_players(), key=lambda u: u.seat or 0)
@@ -369,6 +397,100 @@ class DaytimeFlowMixin:
         if direction == 'desc':
             alive = list(reversed(alive))
         return [player.nick for player in alive]
+
+    def _seat_capacity(self: 'Room') -> int:
+        roles = getattr(self, 'roles', None)
+        if roles:
+            return len(roles)
+        seats = [u.seat for u in self.players.values() if u.seat]
+        return max(seats) if seats else 12
+
+    def _step_seat(self: 'Room', seat: int, direction: str, capacity: int) -> int:
+        if capacity <= 0:
+            return seat
+        if direction == 'desc':
+            return (seat - 2) % capacity + 1
+        return seat % capacity + 1
+
+    def _build_queue_from_anchor_seat(self: 'Room', anchor_seat: Optional[int], direction: str) -> List[str]:
+        if not anchor_seat:
+            return self._build_directional_queue(direction)
+        alive_map = {u.seat: u.nick for u in self.list_alive_players() if u.seat}
+        if not alive_map:
+            return []
+        capacity = self._seat_capacity()
+        queue: List[str] = []
+        steps = 0
+        seat_cursor = anchor_seat
+        while len(queue) < len(alive_map) and steps < capacity:
+            seat_cursor = self._step_seat(seat_cursor, direction, capacity)
+            steps += 1
+            nick = alive_map.get(seat_cursor)
+            if nick and nick not in queue:
+                queue.append(nick)
+        if len(queue) < len(alive_map):
+            fallback = self._build_directional_queue(direction)
+            for nick in fallback:
+                if nick not in queue:
+                    queue.append(nick)
+        return queue
+
+    def _auto_queue_without_sheriff(self: 'Room') -> tuple[List[str], Optional[str]]:
+        state = self.day_state or {}
+        deaths = state.get('night_deaths', [])
+        dir_to_label = {'asc': '顺序', 'desc': '逆序'}
+
+        if len(deaths) == 1:
+            anchor_player = self.players.get(deaths[0])
+            anchor_seat = anchor_player.seat if anchor_player else None
+            direction = random.choice(['asc', 'desc'])
+            queue = self._build_queue_from_anchor_seat(anchor_seat, direction)
+            if queue:
+                anchor_label = self._format_label(deaths[0])
+                msg = f'当前没有警长，系统随机选择从{anchor_label}的{dir_to_label[direction]}方向开始'
+                return queue, msg
+
+        direction = random.choice(['asc', 'desc'])
+        alive_players = self.list_alive_players()
+        if alive_players:
+            start_player = random.choice(alive_players)
+            queue = self._build_queue_from_player(start_player.nick, direction)
+        else:
+            queue = []
+
+        if not queue:
+            queue = self._build_directional_queue(direction)
+            start_label = None
+        else:
+            start_label = self._format_label(start_player.nick)
+
+        if queue:
+            if start_label:
+                msg = f'当前没有警长，系统随机指定{dir_to_label[direction]}发言顺序，由{start_label}起头'
+            else:
+                msg = f'当前没有警长，系统随机指定{dir_to_label[direction]}发言顺序'
+            return queue, msg
+        return [], None
+
+    def _build_sheriff_queue(self: 'Room', direction: str) -> List[str]:
+        state = self.day_state or {}
+        deaths = state.get('night_deaths', [])
+        if len(deaths) == 1:
+            anchor_player = self.players.get(deaths[0])
+            anchor_seat = anchor_player.seat if anchor_player else None
+            return self._build_queue_from_anchor_seat(anchor_seat, direction)
+
+        captain = self.skill.get('sheriff_captain')
+        if not captain:
+            return self._build_directional_queue(direction)
+
+        queue = self._build_queue_from_player(captain, direction)
+        if not queue:
+            return []
+        if captain in queue:
+            queue = [nick for nick in queue if nick != captain]
+        queue.append(captain)
+        return queue
 
     def _rotate_players(self: 'Room', players: List['User'], start_idx: int, step: int) -> List['User']:
         if not players:
@@ -500,7 +622,21 @@ class DaytimeFlowMixin:
             result_lines.append(f"弃票：{seats}")
         self.broadcast_msg('\n'.join(result_lines))
 
-        tally = {nick: len(records.get(nick, [])) for nick in candidates}
+        captain_bonus_applied = False
+        tally: Dict[str, float] = {}
+        for nick in candidates:
+            voters = records.get(nick, [])
+            total = 0.0
+            for voter in voters:
+                weight = self._exile_vote_weight(voter, nick)
+                if weight > 1.0:
+                    captain_bonus_applied = True
+                total += weight
+            tally[nick] = total
+
+        if captain_bonus_applied:
+            self.broadcast_msg('警长单点归票生效，本轮投票中警长投票计为1.5票。')
+
         max_votes = max(tally.values()) if tally else 0
         if max_votes == 0:
             self.broadcast_msg('放逐失败，无人出局')
@@ -516,6 +652,12 @@ class DaytimeFlowMixin:
             else:
                 self.broadcast_msg('放逐失败，无人出局')
                 self.end_day_phase()
+
+    def _exile_vote_weight(self: 'Room', voter: str, target: str) -> float:
+        captain = self.skill.get('sheriff_captain')
+        if voter == captain and target != '弃票':
+            return 1.5
+        return 1.0
 
     def start_exile_pk_speech(self: 'Room') -> None:
         candidates = [nick for nick in self.day_state.get('pk_candidates', []) if self._is_alive(nick)]
