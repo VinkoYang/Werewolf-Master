@@ -37,6 +37,7 @@ class DaytimeFlowMixin:
             'sheriff_order_pending': False,
             'pending_badge_followup': None,
             'pending_announcement_broadcast': False,
+            'sheriff_call_target': None,
         }
         has_pending_day_bombs = bool(self.skill.get('pending_day_bombs'))
         if has_pending_day_bombs and announce:
@@ -340,6 +341,41 @@ class DaytimeFlowMixin:
         self.broadcast_msg(f'{self._format_label(captain_nick)}超时未选择发言顺序，系统自动{choice}')
         self.set_sheriff_order(captain, choice, auto=True)
 
+    def set_sheriff_call_target(self: 'Room', user: 'User', target: Optional[str]) -> Optional[str]:
+        captain = self.skill.get('sheriff_captain')
+        if user.nick != captain or not self._is_alive(user.nick):
+            return '只有在场警长可以归票'
+        phase = (self.day_state or {}).get('phase')
+        allowed = {
+            'exile_speech',
+            'await_exile_vote',
+            'exile_vote',
+            'exile_pk_speech',
+            'await_exile_pk_vote',
+            'exile_pk_vote'
+        }
+        if phase not in allowed:
+            return '当前阶段不可归票'
+
+        if not target or target == 'clear':
+            if self.day_state.get('sheriff_call_target'):
+                self.day_state['sheriff_call_target'] = None
+                self.broadcast_msg(f'{self._format_label(user.nick)}收回归票声明。')
+            else:
+                self.day_state['sheriff_call_target'] = None
+            return None
+
+        if target == user.nick:
+            return '不可归票自己'
+        if not self._is_alive(target):
+            return '目标玩家无效'
+
+        self.day_state['sheriff_call_target'] = target
+        self.broadcast_msg(
+            f'{self._format_label(user.nick)}归票{self._format_label(target)}，若本轮放逐投票命中则计 1.5 票。'
+        )
+        return None
+
     def _build_queue_from_player(self: 'Room', start_nick: str, direction: str) -> List[str]:
         alive = sorted(self.list_alive_players(), key=lambda u: u.seat or 0)
         if not alive:
@@ -586,7 +622,21 @@ class DaytimeFlowMixin:
             result_lines.append(f"弃票：{seats}")
         self.broadcast_msg('\n'.join(result_lines))
 
-        tally = {nick: len(records.get(nick, [])) for nick in candidates}
+        captain_bonus_applied = False
+        tally: Dict[str, float] = {}
+        for nick in candidates:
+            voters = records.get(nick, [])
+            total = 0.0
+            for voter in voters:
+                weight = self._exile_vote_weight(voter, nick)
+                if weight > 1.0:
+                    captain_bonus_applied = True
+                total += weight
+            tally[nick] = total
+
+        if captain_bonus_applied:
+            self.broadcast_msg('警长单点归票生效，本轮投票中警长投票计为1.5票。')
+
         max_votes = max(tally.values()) if tally else 0
         if max_votes == 0:
             self.broadcast_msg('放逐失败，无人出局')
@@ -602,6 +652,12 @@ class DaytimeFlowMixin:
             else:
                 self.broadcast_msg('放逐失败，无人出局')
                 self.end_day_phase()
+
+    def _exile_vote_weight(self: 'Room', voter: str, target: str) -> float:
+        captain = self.skill.get('sheriff_captain')
+        if voter == captain and target != '弃票':
+            return 1.5
+        return 1.0
 
     def start_exile_pk_speech(self: 'Room') -> None:
         candidates = [nick for nick in self.day_state.get('pk_candidates', []) if self._is_alive(nick)]
