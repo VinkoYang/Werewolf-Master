@@ -1,4 +1,5 @@
 # models/user.py
+import html
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING, Any
 
@@ -70,8 +71,20 @@ class User:
                     # 私聊消息以红色显示
                     self.game_msg.append(put_html(f"<div style='color:red'>Private: {msg[1]}</div>"))
                 elif msg[0] == Config.SYS_NICK:
-                    content = msg[1]
-                    self.game_msg.append(f'Public: {content}')
+                    payload = msg[1]
+                    speak_text = ''
+                    has_tts = False
+                    if isinstance(payload, dict):
+                        speak_text = str(payload.get('text', '') or '')
+                        has_tts = bool(payload.get('tts')) and bool(speak_text)
+                    else:
+                        speak_text = str(payload)
+                    safe_display = html.escape(speak_text)
+                    snippet = f"<div>Public: {safe_display}</div>"
+                    if has_tts:
+                        js_text = speak_text.replace('\\', '\\\\').replace("'", "\\'").replace('\n', ' ').replace('\r', ' ')
+                        snippet += f"<script>window.MoonVerdictSpeech && window.MoonVerdictSpeech('{js_text}');</script>"
+                    self.game_msg.append(put_html(snippet))
                 elif msg[0] is None and msg[1] == LogCtrl.RemoveInput and self.input_blocking:
                     get_current_session().send_client_event({
                         'event': 'from_cancel',

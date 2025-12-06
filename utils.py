@@ -27,17 +27,11 @@ async def async_sleep(seconds: float):
         return
 
     if run_asyncio_coroutine is not None:
-        coro = asyncio.sleep(seconds)
         try:
-            await run_asyncio_coroutine(coro)
+            await run_asyncio_coroutine(asyncio.sleep(seconds))
             return
         except (RuntimeError, SessionClosedException, SessionNotFoundException):
-            # 当前上下文不是 PyWebIO（或会话已关闭），需要关闭当前协程以避免警告
-            try:
-                coro.close()
-            except Exception:
-                pass
-            # 回退至默认 asyncio
+            # 当前上下文不是 PyWebIO（或会话已关闭），回退至默认 asyncio
             pass
 
     await asyncio.sleep(seconds)

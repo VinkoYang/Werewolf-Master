@@ -207,6 +207,25 @@ def build_js_countdown_html(label: str, seconds: int, key: str) -> str:
 async def main():
     set_env(title="-Moon Verdict 月光审判- 狼人杀法官助手")
     put_markdown("## -Moon Verdict 月光审判- 狼人杀AI法官")
+    run_js(
+        """
+        (function(){
+            if (window.__mvSpeechReady) return;
+            window.__mvSpeechReady = true;
+            window.MoonVerdictSpeech = function(text){
+                if (!text || !('speechSynthesis' in window)) return;
+                try {
+                    var utter = new SpeechSynthesisUtterance(text);
+                    utter.rate = 1.2;
+                    window.speechSynthesis.cancel();
+                    window.speechSynthesis.speak(utter);
+                } catch (err) {
+                    console.warn('MoonVerdictSpeech failed', err);
+                }
+            };
+        })();
+        """
+    )
     current_user = User.alloc(
         await input('请输入你的昵称',
                     required=True,
