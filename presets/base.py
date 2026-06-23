@@ -445,6 +445,7 @@ class DefaultGameFlow(BaseGameConfig):
             'pending_half_blood_target',
             'pending_fear',
             'pending_learn',
+            'mw_first_knife',
             'pending_act_target',
         ]
         for user in room.players.values():

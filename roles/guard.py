@@ -88,15 +88,28 @@ class Guard(RoleBase):
         if not target:
             return '查无此人'
         protected_from_poison = target.status == PlayerStatus.PENDING_POISON
+        room = self.user.room
+        seat = target.seat if target else '?'
+
+        # 机械狼双刀破盾：若机械狼对该目标使用了双刀同一目标，守卫保护无效
+        mw_double_knife_target = room.skill.get('mw_double_knife_target')
+        if mw_double_knife_target and nick == mw_double_knife_target:
+            self.user.send_msg(f'今晚，你守护了{seat}号玩家，但被机械狼双刀破盾，保护无效。')
+            self.user.skill['last_protect'] = nick
+            self.user.skill['last_protect_round'] = getattr(room, 'round', None)
+            self.user.skill['acted_this_stage'] = True
+            self.user.skill['guard_action_notified'] = True
+            self.user.skill.pop('guard_stage_ready', None)
+            return True
+
         if not protected_from_poison:
-            if target.status == PlayerStatus.PENDING_HEAL and self.user.room.guard_rule == GuardRule.MED_CONFLICT:
+            if target.status == PlayerStatus.PENDING_HEAL and room.guard_rule == GuardRule.MED_CONFLICT:
                 target.status = PlayerStatus.PENDING_DEAD
             else:
                 target.status = PlayerStatus.PENDING_GUARD
         self.user.skill['last_protect'] = nick
-        self.user.skill['last_protect_round'] = getattr(self.user.room, 'round', None)
+        self.user.skill['last_protect_round'] = getattr(room, 'round', None)
         self.user.skill['acted_this_stage'] = True
-        seat = target.seat if target else '?'
         self.user.send_msg(f'今晚，你守护了{seat}号玩家')
         self.user.skill['guard_action_notified'] = True
         self.user.skill.pop('guard_stage_ready', None)

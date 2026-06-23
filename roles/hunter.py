@@ -139,6 +139,17 @@ class Hunter(RoleBase):
             self.user.send_msg('目标不可用')
             return
         seat = target.seat if target.seat is not None else '?'
+
+        # ── 机械盾抵挡猎人子弹 ──────────────────────────────────────────
+        if (getattr(room, 'mw_shield_blocks_hunter', False)
+                and room.skill.get('mw_guarded_this_round') == target_nick):
+            room.broadcast_msg(f'猎人开枪，但{seat}号玩家受机械盾保护，免疫此次击杀。', tts=True)
+            self.user.skill['pending_last_skill'] = False
+            self.user.skill['last_words_skill_resolved'] = True
+            self.user.skill['can_shoot'] = False
+            room.advance_last_words_progress(self.user)
+            return
+
         # True when we're resolving a daytime exile: pending_execution is set only during
         # start_execution_sequence and cleared by end_day_phase.
         from_day_execution = (

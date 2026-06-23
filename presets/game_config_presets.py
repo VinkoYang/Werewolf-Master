@@ -2,7 +2,7 @@ from enums import GuardRule, SheriffBombRule, WitchRule
 
 # Shared default rules applied to all preset room templates unless overridden.
 DEFAULT_ROOM_RULES = {
-    'witch_rule': WitchRule.SELF_RESCUE_FIRST_NIGHT_ONLY.value,
+    'witch_rule': WitchRule.NO_SELF_RESCUE.value,
     'guard_rule': GuardRule.MED_CONFLICT.value,
     'sheriff_bomb_rule': SheriffBombRule.DOUBLE_LOSS.value,
 }

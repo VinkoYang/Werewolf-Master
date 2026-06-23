@@ -72,6 +72,14 @@ def _room_config_text(room: Room) -> str:
     rules = (f"女巫：{room.witch_rule.value}｜"
              f"守卫：{room.guard_rule.value}｜"
              f"自曝：{room.sheriff_bomb_rule.value}")
+    if Role.MECHANICAL_WOLF in room.roles:
+        mw_opts = []
+        if getattr(room, 'mw_shield_blocks_hunter', False):
+            mw_opts.append('机械盾抵挡猎枪')
+        if getattr(room, 'mw_double_knife_breaks_shield', False):
+            mw_opts.append('双刀破盾')
+        if mw_opts:
+            rules += '｜' + '｜'.join(mw_opts)
     return f"共 {total} 人 | {'、'.join(parts)} | {rules}"
 
 
@@ -90,6 +98,8 @@ def _room_config_dict(room: Room) -> dict:
         'witch_rule': room.witch_rule.value,
         'guard_rule': room.guard_rule.value,
         'sheriff_bomb_rule': room.sheriff_bomb_rule.value,
+        'mw_shield_blocks_hunter': getattr(room, 'mw_shield_blocks_hunter', False),
+        'mw_double_knife_breaks_shield': getattr(room, 'mw_double_knife_breaks_shield', False),
     }
 
 
@@ -984,6 +994,12 @@ async def on_configure_room(sid, data):
         config.get('guard_rule', DEFAULT_ROOM_RULES['guard_rule']))
     room.sheriff_bomb_rule = SheriffBombRule.from_option(
         config.get('sheriff_bomb_rule', DEFAULT_ROOM_RULES['sheriff_bomb_rule']))
+    if Role.MECHANICAL_WOLF in room.roles:
+        room.mw_shield_blocks_hunter = bool(config.get('mw_shield_blocks_hunter', False))
+        room.mw_double_knife_breaks_shield = bool(config.get('mw_double_knife_breaks_shield', False))
+    else:
+        room.mw_shield_blocks_hunter = False
+        room.mw_double_knife_breaks_shield = False
     room._mark_seat_state_dirty()
     room.broadcast_msg(f'房间配置已更新：{room.desc()}')
     await push_room_state_all(room)
