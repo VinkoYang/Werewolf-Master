@@ -29,10 +29,72 @@ This document captures the structural changes introduced while extracting the in
 - **Wolf phase telemetry**: `roles/wolf.py` switches the action gate from `acted_this_stage` to a dedicated `wolf_action_done` flag so wolves can toggle targets without unblocking the room prematurely. Stage cleanup clears the new flag after votes resolve.
 
 ## Testing & follow-up checklist
-- [ ] Manual smoke test: start a 12p board, confirm day/night loop runs with the new mixins.
-- [ ] Sheriff flow: cover signup → speech → vote, PK fallback, and a forced timeout to ensure timers resolve.
-- [ ] Badge transfer: verify standard death handoff, idiot flip, and badge destruction path when timeout hits.
-- [ ] Wolf `放弃` handling: verify all wolves can abstain and the room still proceeds to night summary.
+- [x] Manual smoke test: start a 12p board, confirm day/night loop runs with the new mixins.
+- [x] Sheriff flow: cover signup → speech → vote, PK fallback, and a forced timeout to ensure timers resolve.
+- [x] Badge transfer: verify standard death handoff, idiot flip, and badge destruction path when timeout hits.
+- [x] Wolf `放弃` handling: verify all wolves can abstain and the room still proceeds to night summary.
 - [ ] Nine-tailed fox notification: ensure the 🌙 message appears only once per night per fox.
 
 If new regressions surface, update this document with the scenario and corresponding fix reference.
+
+---
+
+## In-process simulation framework (`tests/simulate_12p.py`) — 2026-06-22
+
+A serverless auto-play harness was added so the full game loop can be exercised without running `server.py`.
+
+### How it works
+
+The script monkey-patches all modules that bind `async_sleep` via `from utils import async_sleep` before the game modules are imported:
+
+```
+utils, presets.base, models.room, models.runtime.tools, models.runtime.sheriff
+```
+
+Each of those five modules holds its own reference to the original function; patching only `utils.async_sleep` would leave the others intact. All five are patched to `min(seconds, 0.01)` and restored after the run.
+
+`DefaultGameFlow.wait_for_player` is also patched to force `min_duration=0`, bypassing the 20-second night floor.
+
+`AutoWatcher` polls `room.waiting` / `room.sheriff_state` / `room.day_state` in a tight async loop and dispatches to role-specific handlers, covering wolf kills, seer checks, witch heal/poison, guard protect, hunter night confirm, and hunter daytime shoot.
+
+### Known tricky interactions discovered during development
+
+| Scenario | Root cause | Fix |
+|---|---|---|
+| Game stuck at WITCH/GUARD | `from utils import async_sleep` creates separate bindings per module; patching `utils` alone doesn't reach them | Patch all five modules explicitly |
+| Game stuck at LAST_WORDS (hunter exiled) | `complete_last_word_speech` returns early when `last_words_skill_resolved=False`; must call `handle_last_word_skill_choice('放弃技能')` first | Call skill-choice before speech |
+| Sheriff signup stuck after night-1 wolf kill | `_sheriff_signup_pool()` includes `PENDING_DEAD` players; watcher must vote for them too | Iterate `_sheriff_signup_pool()` not `alive_players()` |
+| Hunter shoot target appears in next night's death announcement | `from_day_execution` condition in `confirm_shoot` used `'day_skill_to_speech'` which is never set → always `False` → target stays `PENDING_DEAD` | Changed to `bool(room.day_state.get('pending_execution'))` (see bug fix below) |
+
+---
+
+## Bug fix: hunter/wolf_king `from_day_execution` — 2026-06-22
+
+**Files:** `roles/hunter.py`, `roles/wolf_king.py`
+
+**Symptom:** When a hunter (or wolf king) is exiled and shoots a player during the daytime last-words cycle, the shot target appeared in the *next night's* death announcement (e.g. "昨夜1号和…死亡" when 1号 had already been killed the previous day).
+
+**Root cause:**
+
+`confirm_shoot` computed:
+```python
+from_day_execution = (
+    room.stage == GameStage.LAST_WORDS and
+    room.day_state.get('after_last_words') == 'day_skill_to_speech'
+)
+```
+
+The value `'day_skill_to_speech'` is never written anywhere in the codebase, so `from_day_execution` was permanently `False`.
+
+`handle_last_word_skill_kill(from_day_execution=False)` does **not** add the target to `day_deaths`, leaving the target's status as `PENDING_DEAD`. The next night's death-resolution loop in `presets/base.py::night_logic()` sees `PENDING_DEAD` and treats it as a new night kill.
+
+**Fix:**
+
+```python
+from_day_execution = (
+    room.stage == GameStage.LAST_WORDS and
+    bool(room.day_state.get('pending_execution'))
+)
+```
+
+`pending_execution` is set by `start_execution_sequence()` (daytime exile) and cleared by `end_day_phase()`, making it a reliable sentinel for the daytime-execution context. With `from_day_execution=True`, the target is added to `day_deaths` and correctly finalized to `DEAD` via `_finalize_day_execution()` on the same day.

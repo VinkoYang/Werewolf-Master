@@ -110,7 +110,7 @@ class DefaultGameFlow(BaseGameConfig):
                     u.status = PlayerStatus.ALIVE
 
             elif u.status == PlayerStatus.PENDING_DEAD:
-                if immunity or u.status in (PlayerStatus.PENDING_HEAL, PlayerStatus.PENDING_GUARD):
+                if immunity:
                     u.status = PlayerStatus.ALIVE
                 else:
                     u.status = PlayerStatus.DEAD
@@ -361,7 +361,7 @@ class DefaultGameFlow(BaseGameConfig):
 
     def has_active_role(self, roles: List[Role]) -> bool:
         room = self.room
-        alive_statuses = {PlayerStatus.ALIVE, PlayerStatus.PENDING_GUARD, PlayerStatus.PENDING_HEAL}
+        alive_statuses = {PlayerStatus.ALIVE, PlayerStatus.PENDING_GUARD, PlayerStatus.PENDING_HEAL, PlayerStatus.PENDING_DEAD}
         return any(
             user.role in roles and user.status in alive_statuses
             for user in room.players.values()
@@ -396,7 +396,7 @@ class DefaultGameFlow(BaseGameConfig):
     async def wait_for_player(self, *, min_duration: Optional[float] = None, auto_release: bool = False, silent_timeout: bool = False):
         room = self.room
         timeout = 20
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start = loop.time()
         stage = room.stage
         if min_duration is None:

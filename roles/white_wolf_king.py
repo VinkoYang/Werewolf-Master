@@ -1,6 +1,6 @@
 # roles/white_wolf_king.py
 from typing import List
-from pywebio.input import actions
+from stub import actions
 
 from enums import GameStage, PlayerStatus
 from .wolf import Wolf

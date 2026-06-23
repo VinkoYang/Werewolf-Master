@@ -12,7 +12,7 @@
 - 狼人阶段和其他狼人一起行动
 """
 from typing import Optional, List
-from pywebio.input import actions
+from stub import actions
 from .wolf import Wolf
 from .base import player_action
 from enums import PlayerStatus, GameStage, Role

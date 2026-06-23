@@ -269,7 +269,7 @@ class DaytimeFlowMixin:
         if self.game_over:
             return
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
         except RuntimeError:
             return
         loop.create_task(self.check_game_end())
@@ -609,18 +609,6 @@ class DaytimeFlowMixin:
             return
         candidates = self.day_state.get('vote_candidates', [])
         records = self.day_state.get('vote_records', {})
-        result_lines = ['放逐投票结果：']
-        for nick in candidates:
-            voters = records.get(nick, [])
-            if not voters:
-                continue
-            seats = '、'.join(self._format_label(v) for v in voters)
-            result_lines.append(f"{self._format_label(nick)}得票<- {seats}")
-        abstain = records.get('弃票', [])
-        if abstain:
-            seats = '、'.join(self._format_label(v) for v in abstain)
-            result_lines.append(f"弃票：{seats}")
-        self.broadcast_msg('\n'.join(result_lines))
 
         captain_bonus_applied = False
         tally: Dict[str, float] = {}
@@ -634,8 +622,23 @@ class DaytimeFlowMixin:
                 total += weight
             tally[nick] = total
 
+        parts = []
+        for nick in candidates:
+            voters = records.get(nick, [])
+            if not voters:
+                continue
+            voter_seats = '，'.join(self._format_label(v) for v in voters)
+            weighted = tally[nick]
+            vote_str = str(int(weighted)) if weighted == int(weighted) else str(weighted)
+            parts.append(f"{self._format_label(nick)}（{vote_str}票）：{voter_seats}")
+        abstain = records.get('弃票', [])
+        if abstain:
+            voter_seats = '，'.join(self._format_label(v) for v in abstain)
+            parts.append(f"弃票：{voter_seats}")
+        result_msg = '放逐投票结果：' + (' ｜ '.join(parts) if parts else '无有效票')
         if captain_bonus_applied:
-            self.broadcast_msg('警长单点归票生效，本轮投票中警长投票计为1.5票。')
+            result_msg += '（警长票计1.5票）'
+        self.broadcast_msg(result_msg)
 
         max_votes = max(tally.values()) if tally else 0
         if max_votes == 0:
@@ -662,6 +665,15 @@ class DaytimeFlowMixin:
     def start_exile_pk_speech(self: 'Room') -> None:
         candidates = [nick for nick in self.day_state.get('pk_candidates', []) if self._is_alive(nick)]
         if not candidates:
+            self.end_day_phase()
+            return
+        # If every alive player is a PK candidate there are no eligible voters — skip speech
+        eligible_voters = [
+            u.nick for u in self.list_alive_players()
+            if u.nick not in candidates and self._can_player_vote(u.nick)
+        ]
+        if not eligible_voters:
+            self.broadcast_msg('放逐失败，无人出局')
             self.end_day_phase()
             return
         ordered = sorted(candidates, key=lambda nick: self.players[nick].seat or 0)

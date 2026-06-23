@@ -1,13 +1,15 @@
-# Wolf
-狼人杀面杀法官系统
-## 链接
+# Wolf — 狼人杀法官助手
+
+基于 **FastAPI + Socket.IO** 的异步狼人杀法官系统。支持断线自动重连，游戏状态持久保存在服务端，刷新页面或后台唤醒后可凭 token 无缝恢复。
+
+## 文档链接
 - [狼人杀规则](doc/rules.md)
 - [狼人杀角色介绍](doc/roles.md)
-- [狼人杀特殊版型介绍](doc/configuration.md)
+- [特殊版型说明](doc/configuration.md)
 
-Preview
---
-![目前版型](pics/lobby.png)
+## 预览
+
+![大厅](pics/lobby.png)
 
 ![房间设置界面](pics/room_setting.png)
 
@@ -22,612 +24,172 @@ Preview
 
 猎人
 ![猎人角色UI界面](pics/hunter_UI.png)
-如何使用
---
-0. 安装 Python 3.7 版本及以上
-1. pip install -r requirements.txt
-2. python main.py
-3. 所有玩家访问 Web 服务
 
---
-使用虚拟环境：
-```{
-spython3 -m venv venv
-source venv/bin/activate
-pip install "pywebio==1.8.3"
-python main.py
-}
+## 如何使用
+
+0. 安装 Python 3.10 及以上
+1. `pip install -r requirements.txt`
+2. `python server.py`
+3. 所有玩家访问 `http://localhost:8080`
+
+可选：指定端口 + ngrok 公网穿透：
+```bash
+PORT=8080 NGROK_AUTHTOKEN=你的token python server.py
 ```
-## 身份介绍
---
 
-- [狼人杀角色介绍](doc/roles.md)
+---
 
-## 待开发和优化
-1. TTS 目前仅支持 macOS，windows，需要支持更多的平台
-2. 多平台的 Standalone executable
-3. 未对断线重连做支持 (等待 PyWebIO 支持)
+## 🧪 Simulation（无服务器测试）
 
+提供两套模拟脚本，**均无需启动 server.py**：
 
+| 脚本 | 测试层 | 用途 |
+|------|--------|------|
+| `tests/simulate_12p.py` | 直接调用模型方法（绕过 server） | 游戏逻辑回归、边界场景 |
+| `tests/simulate_server.py` | 通过 `_dispatch_action` 走按键分发路径 | 验证每个按键从点击到生效的完整链路 |
 
-## 待测试 list（2025-11-29 更新）
-- **倒计时与自动判定**
-    ~~- 上警报名 10s 到期后自动记“不上警”。~~
-    ~~- 警长竞选/PK 投票 10s 超时自动弃票并立刻结算。~~
-    - 放逐/放逐 PK 投票倒计时结束后所有未操作玩家被视为弃票。
-- **狼美人与殉情**
-    - 魅惑流程刷新后仍保留 pending 目标，确认或超时后 charm_target 会写入。
-    - 狼美人被毒/梦/放逐/猎人射杀时，魅惑对象同步殉情且禁用技能。
-- **白天流程**
-    - 警徽移交 10s 倒计时：提前操作/超时都能继续推进。
-    - 自曝（白狼王/普狼）落地后，徽章/遗言/公告顺序保持一致。
-- **夜间角色**
-    - 狼人点击“放弃”立即收到私聊“你放弃选择”。
-    - 被梦魇恐惧或强制空刀的狼人看到只读提示并等待 20s。
-- **大厅 & 版型**
-    - 新的狼美人、九尾妖狐、混血儿版型均可从大厅预设按钮创建并正常运行。
-    - 断线后重新进入大厅，房间/座位面板保持同步。
-    - 测试双爆模式跨日竞选逻辑
-    - 验证警徽移交后新警长权限立即生效
-    - 检查自曝遗言阶段是否正确触发技能（猎人/狼王）
+### 快速启动
 
+```bash
+# 游戏逻辑层（快）
+python -m tests.simulate_12p --auto
 
+# 按键分发层（验证 server 层按键响应）
+python -m tests.simulate_server --auto
 
+# 12人标准局（默认）
+python -m tests.simulate_12p --auto
 
---
+# 指定版型
+python -m tests.simulate_12p --preset preset_dev_3  --auto   # 3人
+python -m tests.simulate_12p --preset preset_dev_7  --auto   # 7人（含守卫）
+python -m tests.simulate_12p --preset preset_standard_12 --auto  # 12人标准
 
-# 程序说明
-本项目是一个基于 PyWebIO 的异步狼人杀法官系统，依托 asyncio 驱动协程，分层清晰，便于扩展角色或 UI。
+# 不加 --auto 仅发牌查看角色分配，不推进游戏
+python -m tests.simulate_12p --preset preset_dev_7
+```
 
-## 1️⃣ 模块分层（2025-11-25 梳理）
+### 可用版型（--preset）
+
+| 值 | 描述 |
+|----|------|
+| `preset_dev_3` | 1狼 + 1平民 + 1预言家 |
+| `preset_dev_6` | 1狼 + 1平民 + 预女猎守 |
+| `preset_dev_7` | 2狼 + 1平民 + 预女猎守 |
+| `preset_standard_12` | 4狼 + 4平民 + 预言家 + 女巫 + 猎人 + 白痴 |
+| `preset_half_blood_mix` | 12人混血儿版型 |
+| `preset_white_wolf_guard` | 12人白狼王版型 |
+| `preset_wolf_king_guard` | 12人黑狼王版型 |
+| `preset_wolf_king_dreamer` | 12人黑狼王+摄梦人版型 |
+| `preset_nine_tailed_fox` | 12人九尾妖狐版型 |
+| `preset_nightmare` | 12人梦魇版型 |
+| `preset_wolf_beauty` | 12人狼美人版型 |
+
+### Bot 行为覆盖
+
+| 角色 | 行为 |
+|------|------|
+| **狼人** | 每人独立随机刀一个非狼存活玩家（不再统一目标） |
+| **预言家** | 每夜随机查验一个未查验过的玩家；**固定参与警长竞选** |
+| **女巫** | 有解药时救被刀玩家；之后用毒药毒随机剩余存活玩家 |
+| **守卫** | 每夜随机守护一人（规避连守规则） |
+| **猎人** | 夜晚确认枪状态；被放逐时射杀随机存活玩家 |
+
+白天流程：是否上警随机决定（预言家除外，固定上警）；警长投票各自独立随机选候选人；发言即时推进；放逐投票各自独立随机选候选人；放逐PK同理；遗言立即结束。
+
+### 如何阅读输出
+
+```
+[📢]         系统广播（所有玩家可见）
+[botX]       私聊消息（仅该玩家可见）
+[SYS]        控件日志（如 RemoveInput）
+```
+
+关键节点：
+- `今夜，狼队选择X号玩家被击杀` → 狼人实际投票落刀，而非空刀
+- `今晚，你对X号玩家使用解药 / 毒药` → 女巫两瓶药的使用轨迹
+- `你选择查验X号玩家，他的身份是Y` → 预言家每夜查验结果
+- `今晚，你守护了X号玩家` → 守卫实际守护
+- `X号玩家被带走` → 猎人开枪生效
+- 末尾 `[📢] botX：角色名` → 游戏结束身份揭示
+
+### 技术实现
+
+脚本启动时在导入游戏模块前完成以下 monkey-patch：
+- `async_sleep` → 最大 0.01 秒（加速所有内置等待）
+- `DefaultGameFlow.wait_for_player` → 强制 `min_duration=0`（取消20秒夜间最短等待）
+
+以上 patch 仅在 `--auto` 模式下注入，`run()` 返回后恢复原值，不影响其他进程。
+
+---
+
+## 程序说明
+
+### 1️⃣ 模块分层
+
 - `enums.py`：集中定义枚举（角色、阶段、规则），是所有业务层的基础。
-- `models/system.py`：`Global` 负责注册/查询房间与用户；`Config` 存放系统昵称等常量。
-- `models/user.py`：封装玩家实体，管理个人状态、消息同步与角色实例（`role_instance`）。
+- `models/system.py`：`Global` 负责注册/查询房间与用户；`Config` 存放系统常量。
+- `models/user.py`：封装玩家实体，持有 `sid`（当前连接）、`reconnect_token`（断线重连凭据）、`message_cursor`（消息消费位置）与角色实例（`role_instance`）。
 - `models/room.py`：房间核心逻辑（建房、分配角色、主持面板），昼夜循环委托给 `RoomRuntimeMixin`。
 - `models/room_runtime.py` 与 `models/runtime/`：运行时混入集合（`SheriffFlowMixin`、`DaytimeFlowMixin`、`tools.AsyncTimer` 等），负责警长竞选、白天发言/投票、徽章移交等流程，详见 [`doc/runtime-refactor.md`](doc/runtime-refactor.md)。
-- `presets/base.py`（以及兼容层 `presets/game_config_base.py`）与 `presets/game_config_*.py`：封装夜晚/胜负流程的策略类；不同版型拥有独立脚本，互不依赖，只共享 `BaseGameConfig`/`DefaultGameFlow`。
-- `presets/game_config_registry.py`：集中注册所有 game_config_* 元数据，负责版型检测与大厅预设模板输出。
-- `models/lobby.py`：大厅 UI 与房间创建/加入流程，包含预设板子、链接跳转等展示逻辑。
-- `roles/` 目录：每个角色一个文件，继承 `roles/base.py` 的 `RoleBase`，实现自身技能及 UI。
-- `utils.py`：工具函数（随机数、语音播报、网络信息、Scope 命名等），提供跨模块公用能力。
-- `main.py`：入口协程，会话生命周期管理、大厅指令分发、房主/玩家输入调度。
+- `presets/base.py`：定义 `BaseGameConfig` 与 `DefaultGameFlow`，封装夜晚/胜负流程的策略基类；各特殊版型继承后可独立重写夜晚顺序与胜负判定。
+- `presets/game_config_*.py`：各版型独立脚本（`game_config_12p_std.py`、`game_config_wolf_beauty.py` 等），互不依赖，只共享基类。
+- `presets/game_config_general.py`：`GeneralGameConfig` — 自定义房型（无特殊版型时）的默认入口，直接复用 `DefaultGameFlow`。
+- `presets/game_config_presets.py`：定义 `DEFAULT_ROOM_RULES`（默认女巫/守卫/警长炸弹规则）与所有版型标识常量，供大厅与注册表共用。
+- `presets/game_config_registry.py`：集中注册所有版型元数据，供大厅预设模板输出。
+- `models/lobby.py`：大厅数据逻辑，包含 `resolve_room_config()`、`build_roles_from_config()` 等纯数据函数，供 `server.py` 调用。
+- `roles/`：每个角色一个文件，继承 `roles/base.py` 的 `RoleBase`，实现自身技能及返回 plain dict 的 `get_actions()`。
+- `stub.py`：提供 `actions()` / `radio()` 纯函数，返回可直接序列化为 JSON 的 dict。
+- `utils.py`：工具函数（随机数、语音播报、网络信息等），`async_sleep()` 直接使用 `asyncio.sleep()`。
+- `server.py`：主入口，FastAPI + python-socketio 服务端，含所有事件处理器、行动分发、倒计时任务、状态推送与重连恢复逻辑。
+- `static/`：单页前端（`index.html` + `app.js`），含登录/大厅/房间三个视图，Socket.IO 客户端自动重连，凭 localStorage token 恢复游戏状态。
 
-模块间依赖链：`enums` → `system` → `room`/`user` → `roles` → `main`，而 `models/lobby` 与 `utils` 为跨层共享组件。
+模块间依赖链：`enums` → `system` → `room`/`user` → `roles` → `server`，`models/lobby`、`stub`、`utils` 为跨层共享组件。
 
-## 2️⃣ 系统运行逻辑
-1. **启动阶段**：`python main.py` 会配置 PyWebIO 环境、可选地通过 ngrok 暴露端口，并启动 `start_server`。
-2. **用户接入**：玩家输入昵称 → `User.alloc()` 注册 → `defer_call` 保障断线清理。
-3. **大厅流程**：
-    - `models/lobby.wait_lobby_selection()` 渲染大厅卡片、资料链接。
-    - 选择“创建房间”→ `prompt_room_creation()`（支持预设/自定义板子）。
-    - 选择“加入房间”→ `prompt_room_join()`（输房号或快速加入按钮，实时刷新房间列表）。
-4. **入场与消息区**：进入房间后 `room.add_player(user)`，同步日志到每位用户的 `game_msg`，并在全局 Scope 中挂载倒计时控件。
-5. **游戏循环**：
-    - 房主操作：开始游戏、公布夜晚信息、发起投票、重新配置房间等。
-    - 夜晚阶段：`RoomRuntimeMixin.night_logic()` 依次驱动狼人/女巫/守卫等角色；各角色 UI 由 `role_instance.get_actions()` 返回，配合 `player_action` 装饰器保障阶段校验与确认机制；倒计时/确认逻辑由 `main.py` 调度。
-    - 白天阶段：`DaytimeFlowMixin` / `SheriffFlowMixin` 负责公布夜晚事件、上警/竞选、投票放逐与徽章流程，`main.py` 仍负责将操作按钮下发给相应玩家。
-6. **胜负判定**：`room.check_game_end()` 在每轮结算后判断狼人/好人阵营是否满足结束条件，触发 `end_game()` 广播、清理状态。
+### 2️⃣ 预设版型
 
-## 3️⃣ 数据流与协作
-- **Global Registry**：`Global.rooms` 与 `Global.users` 分别持有房间、玩家实例，提供线程安全的注册/获取。
-- **房间 ↔ 玩家**：`Room.players` 保存 `nick → User`，`User.room` 指回当前房间；消息通过 `Room.log` 发布，`User._game_msg_syncer` 异步消费。
-- **角色技能**：`user.role_instance` 将具体技能下沉到 `roles/*.py`，夜间行动、确认、倒计时均通过角色实例封装，便于添加新身份。
-- **大厅复用**：`models/lobby` 将房间预设、链接区、刷新 UI 等集中管理，`main.py` 只需调用异步接口即可完成大厅体验。
-
-## 4️⃣ 时序概览
-```
-客户端接入 → main.py 初始化 → models.lobby 渲染大厅/创建房间
-  → Room.alloc & User.add_player → Room.start_game
-     → Room.night_logic / day phases ↔ roles/* 动作确认
-        → Room.check_game_end → end_game → 回到大厅或关闭会话
-```
-run_async(room.game_loop())：启动游戏循环线程。
-
-游戏循环（room.game_loop()）：
-while True：
-if not started: sleep。
-await night_logic()：夜晚阶段。
-await check_game_end()：检查胜负（狼人/好人全灭 → end_game()）。
-
-end_game()：广播结束，清理角色/线程。
-
-夜晚逻辑（room.night_logic()）：
-self.round += 1，广播“天黑请闭眼”。
-逐阶段（stage = GameStage.WOLF/SEER/...）：
-广播“XX请出现”。
-self.waiting = True → await wait_for_player()（超时60s）。
-玩家行动（通过main的按钮调用User方法，设置status如PENDING_DEAD）。
-广播“XX请闭眼”。
-
-结算：
-apply_dreamer_logic()：处理摄梦人（免疫/连续死亡，使用utils.rand_int随机）。
-统一结算死亡（PENDING_* → DEAD/ALIVE，根据规则如guard_rule）。
-广播“天亮请睁眼”，设置stage = GameStage.Day（或第一天SHERIFF）。
-
-第一天：stage = GameStage.SHERIFF（上警，未完整实现）。
-
-白天逻辑：
-房主公布death_pending（main中处理）。
-投票（host_vote_op → room.vote_kill(nick)）：设置DEAD，检查猎人开枪（未完整）。
-
-消息和广播（room.py）：
-broadcast_msg(text, tts)：log.append((SYS_NICK, {'text': text, 'tts': True}))，浏览器端根据 tts 标记调用 Web Speech API 播放语音。
-send_msg(text, nick)：log.append((nick, text))。
-broadcast_log_ctrl(ctrl)：log.append((None, ctrl))，如RemoveInput取消输入。
-
-
-玩家逻辑（user.py）
-
-创建/注销：alloc/free，使用Global.users。
-消息同步（_game_msg_syncer）：run_async循环，读取room.log → append到game_msg（私聊/公聊区分）。
-行动方法（@player_action装饰）：
-检查room.waiting和should_act()（根据stage和role匹配enums）。
-示例：wolf_kill_player(nick) → target.status = PENDING_DEAD，room.waiting = False（结束等待）。
-返回str（错误消息）或True/None（成功）。
-
-技能检查：如witch_has_heal()、hunter_gun_status()。
-
-全局和枚举（system.py 和 enums.py）
-
-system.Global：静态方法如reg_room(room)（分配ID）、get_room(id)。
-enums：提供mapping()和from_option()，用于配置解析（如main的input_group → Role.from_option）。
-
---
-# Update Notes
-## v0.6:
-User类添加seat属性，在add_player时分配序号如len(self.players)+1
-
--通用玩家脚本：保留 user.py 中的 User 类作为通用玩家实体。它包含玩家的基本属性（如昵称、房间、状态、技能字典等），以及通用方法（如 send_msg、skip）。User 现在持有两个与角色相关的属性：
-role: 仍然是 enums.Role 枚举值（用于快速检查角色类型）。
-role_instance: 一个具体角色类的实例（继承自基类 RoleBase），负责处理该角色的特定技能和逻辑。
-
-- 各个有技能玩家的单独脚本：引入一个新目录 roles/，其中：
-base.py：定义基类 RoleBase，包含角色通用的方法（如 should_act、activate_skill 等）。所有角色类都继承自它。
-每个具体角色有一个单独的文件（如 wolf.py、seer.py 等），定义该角色的类（e.g., class Wolf(RoleBase)）。角色特定的技能方法（如狼人的 kill_player、预言家的 identify_player 等）都移到这些类中。
-平民（Citizen）和无技能角色也用一个简单类实现（继承基类，但技能方法为空或简单实现）。
-
-- 技能集中管理：所有与角色相关的技能逻辑都移到对应的角色类中。添加/删除角色只需：
-在 roles/ 目录下添加/删除文件和类。
-在 enums.py 的 Role 枚举中添加/删除值。
-在 room.py 的角色分配逻辑中更新角色类映射（role_classes 字典）。
-
-其他调整：
-room.py 中的游戏逻辑（如夜晚阶段）现在通过 user.role_instance 调用具体技能。
-main.py 中的输入处理逻辑调整为调用 user.role_instance 的方法。
-移除了 user.py 中的具体技能方法（如 wolf_kill_player），改为委托给 role_instance。
-装饰器 player_action 移到 roles/base.py 中，作为角色方法的装饰器。
-摄梦人逻辑（原 apply_dreamer_logic）移到 roles/dreamer.py 的类方法中。
-保持原有文件结构，但新增 roles/ 目录。
-
-- 兼容性：重构后，代码功能保持不变，但更模块化。添加新角色（如“白痴”）只需创建 roles/idiot.py，定义类，实现技能，然后在映射中注册。
-
-## 2025-11-20 Moonlight 分支优化
-
-1. 在游戏开始处添加公共隔断（一行 ======================），然后广播 游戏开始！身份发放中...。
-在每晚开始处添加夜数隔断，格式为 ============ 第 n 晚 ============，随后广播 天黑请闭眼。
-
-2. 狼人操作改动（文件 & 要点）：
-
-wolf.py
-
-get_actions:
-显示房间中所有玩家（包含狼人自己）。
-已出局玩家按钮不可点击并显示为灰色（disabled + color='secondary'）。
-使用按钮 dict 支持 color/disabled，若某玩家被一个或多个狼选择，按钮显示为红色（danger）。
-在按钮上方显示当前被哪些狼人选中（例如："Bob 被 狼A, 狼B 选择"），用红色文本呈现。
-kill_player:
-接受 "seat. nick" 格式输入并提取昵称。
-支持更改选择：如果狼之前选过别的目标，会把之前的选择移除（安全检查后移除）。
-把选择记录到 room.skill['wolf_votes']（字典：target -> list of wolf nicks），并把狼自己的 user.skill['wolf_choice'] 记录为当前选择；设置 acted_this_stage=True。
-room.py
-
-3. 倒计时改动 
-夜间狼人结算由原来的 wolf_kill set 改成 wolf_votes 映射：
-统计每个被选目标的票数，选择票数最多的目标作为今晚唯一的被刀对象；若存在平票则随机从平票中选一位。
-将被选中的玩家设为 PENDING_DEAD，并在 public log 中写入提示（非语音）。
-清理 wolf_votes 数据与玩家的 wolf_choice 临时字段。
-通用：
-在 main.py 中添加每位有夜间操作的玩家的 20s 倒计时（每人单独任务），倒计时结束会自动取消当前输入（相当于超时跳过）。
-夜间操作界面自动追加 确认 按钮；点击则取消倒计时并调用玩家角色对象的 confirm() 方法（若实现），以提交选择并结束等待。
-行为支持：
-修改 base.py 中 player_action：新增返回值约定，支持 'PENDING'（暂存选择）与 'CONFIRMED'（最终确认）的语义，只有最终确认/True/None 会结束等待。
-将夜间角色的选择改为“暂存 + 确认”模式（示例实现已完成）：
-wolf.py：选择暂存为 user.skill['wolf_choice']，confirm() 会把选择登记到 room.skill['wolf_votes']。夜间结算会统计票数并选出最多票目标（平票随机）。
-seer.py：选择暂存为 pending_target，confirm() 会最终公布查验结果。
-guard.py：选择暂存为 pending_protect，confirm() 生效后设置守护。
-dreamer.py：选择暂存为 pending_dream_target，confirm() 生效。
-witch.py：解药/毒药选择暂存为 pending_witch_action，confirm() 统一处理 heal/kill。
-hunter.py：将开枪入口适配为支持确认（占位式实现，开枪目标逻辑可后续完善）。
-其他：调整了若干细节（如安全移除先前狼票、清理倒计时任务等）。
-
-3. 板子预设
- 创建房间界面的板子预设
-
-在选择"创建房间"后，会先显示"板子预设"选择界面
-提供两个按钮：
-"3人测试板子"：自动配置为 1普通狼人 + 1平民 + 1预言家
-"自定义配置"：进入原有的详细配置界面
-选择预设后直接创建房间，无需手动填写各项设置
-
-4. 房主的房间配置功能
-
-游戏开始前，房主操作界面的按钮从原来的"开始游戏"变为两个按钮：
-"开始游戏"：启动游戏
-"房间配置"：重新调整房间设置
-点击"房间配置"后会弹出配置界面，显示当前配置的默认值（可修改）
-保存后会更新房间配置并广播通知所有玩家
-
-## 2025-11-21 优化
-1. 夜晚操作窗口 - 按钮变黄色标记待选
-    位置：wolf.py 的 get_actions() 方法
-    实现：当玩家点击某个玩家按钮后，该按钮变为黄色（warning），标志进入待选状态
-    特性：倒计时未结束前可以随时更换选择，黄色标记会跟随更新
-2. 狼人确认后广播消息
-    位置：wolf.py 的 confirm() 方法
-    实现：当一个狼人玩家点击"确认"键后，所有狼人玩家都会收到私聊消息："X号玩家选择击杀Y号玩家"
-    特殊情况：如果选择"放弃"，则广播："X号玩家选择放弃"
-3. 狼人击杀判断逻辑
-    位置：room.py 的 night_logic() 方法
-    实现规则：
-        a. 如果狼人团队只选择了一个玩家，则该玩家就是今夜被击杀的目标
-        b. 如果狼人团队选择了多个玩家，得票最多的玩家是今夜被击杀的目标
-        c. 如果出现平票（多个玩家得票相同），系统自动从平票玩家中随机选择
-        d. 如果所有狼人都没有选择或点击了"放弃"，则今夜空刀
-4. 狼人出现时发送队友信息
-    位置：room.py 的 night_logic() 方法
-    实现：在"Public: 狼人请出现"之后，先给所有狼人玩家发送私聊信息
-    信息格式："狼人玩家是：1号、3号(狼王)、5号"
-    特性：如果有狼王，会特别标注
-5. 击杀判定后发送结果并延迟闭眼
-    位置：room.py 的 night_logic() 方法
-    实现：系统判定完今夜击杀玩家后，给所有狼人发送私聊消息
-    消息格式：
-    有击杀："今夜，狼队选择X号玩家被击杀。"
-    空刀："今夜，狼队空刀。"
-    时序：发送消息后延迟3秒，再显示"Public: 狼人请闭眼"
-    
-    修改的文件
-        wolf.py
-
-            添加了 Role 枚举导入
-            修改了 get_actions() 方法，实现按钮黄色标记
-            修改了 confirm() 方法，实现确认后的广播功能
-        room.py
-
-            在狼人阶段开始时添加狼队成员信息广播
-            优化了狼人击杀判断逻辑，支持单选/多选/平票/空刀所有情况
-            在击杀判定后发送结果消息给所有狼人
-            调整了时序，在发送结果后延迟3秒再闭眼
-
-6. 预言家选择按键点击后按钮没有变黄色
-修复范围：所有夜间神职角色
-    预言家 (seer.py)
-    守卫 (guard.py)
-    摄梦人 (dreamer.py)
-    女巫 (witch.py)
-实现方式：
-    在每个角色的 get_actions() 方法中获取 pending_* 临时选择
-    当按钮对应的玩家是当前临时选择时，设置 'color': 'warning' 使按钮变黄
-    玩家可以在确认前随时更换选择，黄色标记会实时更新
-
-7. 未行动的狼人没收到击杀结果私聊消息 ✅
-修复文件：room.py
-    问题原因：
-    原代码在发送击杀结果消息时有条件 u.status == PlayerStatus.ALIVE，这会排除已死亡但仍是狼人的玩家。
-    修复方案：
-    移除了状态检查条件，改为只要是狼人角色（Role.WOLF 或 Role.WOLF_KING）就发送消息，无论玩家是否存活或是否已行动。
-
-## 2025-11-21 其他玩家的操作界面优化
-1. main.py：
-    - 集成新的女巫操作控件：witch_heal_confirm、witch_poison_op、witch_poison_confirm。
-    - 将猎人确认操作加入 input_group 的动作处理逻辑，确保每个角色的新 UI 能通过统一的输入组提交。
-2.room.py
-    修复阶段关闭刷新逻辑：每个玩家的会话现在会正确发送取消事件，避免之前的 Output.send()/coro not found 错误。
-    保证夜晚阶段结束后所有玩家的 UI 同步更新。
-
-3. wolf.py
-    重构 confirm()：狼人阶段保持等待，直到所有存活的狼人行动或超时。
-    使用共享投票映射和 _check_all_wolves_acted() 辅助方法。
-    广播逻辑仍发送给所有狼人。
-
-4. seer.py
-    优化 identify_player：安全解析 "seat. nick" 格式，确保预选按钮正确触发能力。
-
-5. witch.py
-    重建女巫操作 UI，移除 put_html，新增：
-    解药提示，带专用确认按钮和自动消息。
-    毒药提示，显示所有玩家按钮，支持禁用/自选/死亡状态，红色高亮，取消支持，独立确认按钮。
-    新增处理函数：heal_player、select_poison_target、confirm_poison。
-    增加状态清理，避免重复提示。
-
-6. guard.py
-    重设计 UI：显示所有存活玩家（按座位排序），高亮当前选择，允许守护任意存活玩家。
-    修复 "seat. nick" 解析逻辑。
-7. hunter.py
-    增加显式确认操作，猎人确认身份并结束阶段。
-    状态消息现在每晚只发送一次。
-
-## 2025-11-21 补丁更新2
-1. wolf.py
-    移除了操作列表中的 put_html，将当前投票摘要移到 help_text 中，彻底解决狼人确认时出现的 Output.send() 崩溃问题。
-2. witch.py
-
-    重构女巫操作面板，仅使用 actions 元素：
-    添加解药和毒药的确认消息。
-    支持“无操作”处理（通过自定义 skip）。
-    确保毒药的取消/确认流程逻辑清晰、无重复提示。
-
-3. guard.py
-    重写守卫 UI：
-        显示所有存活玩家。
-        添加确认/跳过的私聊消息。
-        清理解析和高亮逻辑，保证交互一致性。
-4. main.py：已集成女巫和猎人的确认控件，无额外 UI 冗余（猎人保持单一确认按钮）。
-5. seer.py：验证预言家仍正常渲染标准按钮，且在移除 put_html 后不再被阻塞。
-
-## 2025-11-22 补丁更新
-## 2025-11-23 更新补丁3
-- 增加 doc/rules.md 介绍游戏规则
-- 增加 doc/roles.md 介绍角色
-- Fixed the host-action handler in main.py by properly indenting the '公布昨夜信息' branch so the awaited room.publish_night_info() call sits inside the action check。已使用 `python -m py_compile` 验证 main.py 与 models/room.py 编译通过。
-- guard.py：去掉了“守卫无法防御毒药”的早退。现在守卫即便选择了当晚被女巫毒的玩家，操作也会正常记录并提示已守护，但不会改变该玩家的毒杀结局（仍在结算时死亡），满足“可以守但挡不住毒”的要求。
-- witch.py：给确认毒药逻辑引入 Role 判断，一旦目标是猎人就立即把 target.skill['can_shoot'] 置为 False。这样猎人在夜里收到的状态提醒会明确显示“不能开枪”，且遗言阶段也无法进入开枪模式。
-## 2025-11-23 更新补丁5
-- Added a new bullet under README.md’s 身份介绍 to describe白痴：日间翻牌免死、必须先处理警徽、后续只能发言不能投票，确保主 README 也反映了最新机制。
-- Updated doc/rules.md in three places: expanded警徽规则、规则盲点第 2 条，以及身份规则里的白痴条目，统一强调翻牌后必须立即移交或撕毁警徽且永久失去投票权。
-- Updated hunter.py so任何被动带走公告现在统一为“Public: X号玩家被带走”，并改用 room.handle_last_word_skill_kill() 记录击杀结果，保证被带走玩家自动进入后续流程。
-- 重构 room.py 的日间放逐流程：start_execution_sequence() 先建立 day_deaths 队列并进入仅技能阶段，handle_last_word_skill_kill() 会把猎人/狼王等被动击杀的目标追加到同一队列。待所有技能结算完成后，_start_day_last_words_speech() 依据该名单开启遗言阶段，遗言顺序即为死亡顺序；阶段收尾时统一把名单上的玩家结算为死亡。
-- 扩展 start_last_words() 以支持“只遗言不技能”的模式，并新增 _prompt_current_last_word_speech() helper，让白天技能阶段与遗言阶段完全分离但依旧沿用原有 UI 逻辑。
-- Added sheriff-eligibility helpers in room.py so players marked for death overnight still count as contestants. All sheriff-specific flows (record_sheriff_choice, candidate lists, PK speeches) now treat “night pending” players as available until昨夜信息公布完毕. main.py uses the new Room.can_participate_in_sheriff() to render the 上警/退水/投票控件 even if该玩家已在夜里死亡但尚未公布。
-- Ensured that if such a pending player当选警长而在公布时阵亡，现有“技能 → 警徽移交 → 遗言”流水线会触发，因为他们被包含在 follow-up 队列里（逻辑已具备，无需额外改动）。
-
-
-- Fixed猎人开枪后的流程：hunter.py 现在在确认击杀后调用 room.advance_last_words_progress()，避免房间停留在“被带走”广播。被带走的白痴等玩家会获得正常的被动技能/遗言面板。也顺带确保白痴在日间被动阶段会继续进入移交/遗言流程。
-    当 没有警长存活 时，prompt_sheriff_order() 会随机选择一名存活玩家作为锚点，并随机选择 顺序/逆序，从该锚点开始发言。
-## 2025-11-24 更新补丁3
-- doc/roles.md：在摄梦人条目中补充“不能对自己发动技能”的说明，使规则文档与最新客户端行为一致。
-- doc/roles.md：第三方阵营章节更新混血儿条目，记录“第一夜最先行动、不可选自己、预言家永远验好”的新机制。
-- README 与 doc/roles.md：补充白狼王技能描述与最新限制条件，提醒只能在发言/退水阶段现形，且自曝前需预先在面板选择击杀对象。
-        _random_queue_without_sheriff()：在无警长情况下生成随机队列。
-        force_sheriff_order_random()：强制随机选择顺序。
-        set_sheriff_order() 增加 auto 标志，用于区分 手动选择 和 系统自动选择。
-2. main.py
-    警长选择顺序的提示使用 专用 20 秒倒计时，且计时仅针对警长。
-    倒计时结束后自动调用 force_sheriff_order_random()。
-    白天状态跟踪确保：
-        只有警长能看到 顺序/逆序按钮。
-        不再出现额外的“确认”按钮。
-3. main.py
-    。
-4. room.py
-    警长选择顺序流程广播优化后的提示：
-        “放逐发言阶段，请警长选择发言顺序”
-        后续：“警长选择顺序/逆序发言，X请发言”
-    去掉冗余的初始发言公告。
-    无警长或超时情况仍有合理的自动选择提示。
-    随机顺序逻辑和倒计时触发的回退使用一致的文本格式，保持统一。
-5. 狼队空刀逻辑
-    给狼人面板新增可识别的 放弃 按钮，并在 wolf.py 中把它当成一次明确的弃刀操作处理，确保记录被清理且等待状态只在所有狼人决定后才结束。
-    新增 _abstain 与覆盖 skip，使倒计时触发的自动跳过同样计入已行动，且只有当全部狼人行动或放弃后才落刀；若最终无投票则夜晚自动判定为空刀。
-6. 更新遗言顺序
-    Updated models/room.py::start_execution_sequence so if the executed player is a hunter who successfully shoots someone, the遗言队列 includes both the hunter and the victim (hunter first). That way the sequence after the broadcast becomes: hunter skill announcement → hunter发遗言 →被带走的玩家发遗言.
-
-## 2024-11-23 更近补丁2
-1. 狼人自曝机制
-新增**SheriffBombRule** 枚举，支持单爆吞警徽和双爆吞警徽两种规则（默认双爆）
-
-
-狼人在以下阶段会显示红色"自曝"按键：
-警长竞选发言（包括PK发言）
-放逐发言阶段
-推迟退水阶段（双爆模式第二次竞选）
-自曝后立即结束当前发言、跳过后续发言和投票，该狼人出局并发表遗言
-单爆模式下首日任意狼自曝即警徽流失
-双爆模式下，首日自曝推迟警长竞选至次日，上警名单保留；10秒退水窗口结束后继续投票；第二天若再有狼自曝则警徽流失
-2. 房间配置新增自曝规则
-所有房间预设（3人、6人、7人测试板）默认配置为双爆吞警徽
-房主可在创建房间和房间配置界面选择规则：
-单爆吞警徽
-双爆吞警徽（默认）
-
-## 5️⃣ 预设版型（2025-11-25 更新）
 所有 12 人特殊局已拆分为独立 `game_config_*.py` 脚本，可单独扩展夜晚顺序与胜负判定：
 
-1. **12人标准局：预女猎白** (`game_config_12p_std.py`)
-    - 角色：4 狼 / 4 村 / 预言家 / 女巫 / 猎人 / 白痴
-    - 顺序：普狼 → 预言家 → 女巫 → 猎人 → 白痴（默认流程会自动跳过未配置的阶段）
+| 文件 | 版型 | 阵容 |
+|------|------|------|
+| `game_config_12p_std.py` | 12人标准局：预女猎白 | 4狼 / 4村 / 预言家 / 女巫 / 猎人 / 白痴 |
+| `game_config_12p_half_blood_mix.py` | 预女猎白混 | 4狼 / 3村 / 混血儿 / 预女猎白 |
+| `game_config_white_wolf_guard.py` | 白狼王 - 预女猎守 | 白狼王+3狼 / 4村 / 预言家 / 女巫 / 猎人 / 守卫 |
+| `game_config_wolf_king_guard.py` | 黑狼王 - 预女猎守 | 狼王+3狼 / 4村 / 预言家 / 女巫 / 猎人 / 守卫 |
+| `game_config_wolf_king_dreamer.py` | 黑狼王 - 预女猎摄 | 狼王+3狼 / 4村 / 预言家 / 女巫 / 猎人 / 摄梦人 |
+| `game_config_nine_tailed_fox.py` | 预女猎尾 | 4狼 / 4村 / 预言家 / 女巫 / 猎人 / 九尾妖狐 |
+| `game_config_nightmare.py` | 梦魇 - 预女猎守 | 梦魇+3狼 / 4村 / 预言家 / 女巫 / 猎人 / 守卫 |
+| `game_config_wolf_beauty.py` | 狼美人 - 预女猎守 | 狼美人+3狼 / 4村 / 预言家 / 女巫 / 猎人 / 守卫 |
 
-2. **预女猎白混** (`game_config_12p_half_blood_mix.py`)
-    - 角色：4 狼 / 3 村 / 混血儿 / 预女猎白
-    - 顺序：混血儿（首夜认亲）→ 普狼 → 预言家 → 女巫 → 猎人 → 白痴
+### 3️⃣ 系统运行逻辑
 
-3. **白狼王 - 预女猎守** (`game_config_white_wolf_guard.py`)
-    - 角色：白狼王 + 3 狼 / 4 村 / 预言家 / 女巫 / 猎人 / 守卫
-    - 顺序：普狼+白狼王 → 守卫 → 预言家 → 女巫 → 猎人
+1. **启动**：`python server.py` 启动 FastAPI + Socket.IO 服务，可选通过 ngrok 暴露端口。
+2. **用户接入**：浏览器连接 → `login` 事件 → `User.alloc()` 注册并返回 reconnect_token → token 写入 localStorage。断线重连时携带 token，服务端绑定新 sid 并推送当前状态。
+3. **大厅**：`get_lobby` 返回房间列表与预设配置；`create_room` / `join_room` 创建或加入房间。
+4. **消息区**：进入房间后 `room.add_player(user)`，设置 `message_cursor = len(room.log)`；后续消息通过 `get_pending_messages()` 增量推送。
+5. **游戏循环**：
+   - 夜晚：`DefaultGameFlow.night_logic()` 依次驱动各角色；`get_actions()` 返回 UI 配置，`player_action` 装饰器保障阶段校验与确认机制；各角色倒计时由 `server.py` 调度。
+   - 白天：`DaytimeFlowMixin` / `SheriffFlowMixin` 负责公布夜晚事件、上警/竞选、投票放逐与徽章流程。
+6. **胜负判定**：`check_game_end()` 每轮结算后判断是否满足结束条件，触发 `end_game()` 广播并清理状态。
 
-4. **黑狼王 - 预女猎守** (`game_config_wolf_king_guard.py`)
-    - 角色：狼王 + 3 狼 / 4 村 / 预言家 / 女巫 / 猎人 / 守卫
-    - 顺序：普狼+黑狼王 → 守卫 → 预言家 → 女巫 → 猎人 → 黑狼王
+### 4️⃣ 时序概览
 
-5. **黑狼王 - 预女猎摄** (`game_config_wolf_king_dreamer.py`)
-    - 角色：狼王 + 3 狼 / 4 村 / 预言家 / 女巫 / 猎人 / 摄梦人
-    - 顺序：摄梦人 → 普狼+黑狼王 → 预言家 → 女巫 → 猎人 → 黑狼王
+```
+客户端接入 → server.py login → User.alloc → 返回 reconnect_token
+  → get_lobby → create_room/join_room → Room.alloc & User.add_player
+    → Room.start_game → night_logic / day phases ↔ roles/* 动作确认
+      → check_game_end → end_game → 回到大厅
 
-房主在大厅创建房间时可直接点击对应版型按钮，后台会根据角色配置自动选择唯一的 `game_config_*.py`，无匹配时回退到通用 `game_config_general.py`。
-规则持久化到 Room.sheriff_bomb_rule 字段
-3. 警徽移交与撕毁
-警长死亡时，在遗言阶段显示专属操作面板：
-可选择任意存活玩家移交警徽（按座位号列表）
-或选择撕毁警徽（红色按钮）
-移交成功后新警长立即生效；撕毁后本局无警长
-警长因任何原因死亡（包括自曝）均可使用此功能
-4. 推迟的警长竞选
-双爆模式首日自曝后，次日自动恢复警长竞选
-系统公告："继续未完成的警长竞选"
-保留首日上警名单，给予10秒退水时间
-退水结束后直接投票，不再重复发言
-若退水后只剩一人，自动当选；若无人则警徽流失
-5. 状态跟踪与清理
-Room 新增字段：
-sheriff_bomb_rule: 配置的自曝规则
-sheriff_badge_destroyed: 警徽是否已摧毁
-pending_day_bombs: 自曝队列（用于跨阶段处理）
-sheriff_deferred_active/payload/bomb_count: 推迟竞选跟踪
-每日结束时清理相关标记，避免状态污染
-警长死亡且未移交时自动清除警长记录
-6. 用户界面优化
-自曝按键仅在允许时显示（红色、醒目）
-警徽移交面板根据实时存活玩家动态生成按钮
-推迟竞选退水阶段自动启动10秒倒计时（与其他操作一致）
-所有相关操作取消倒计时任务，避免冲突
-7. 兼容性与稳定性
-所有改动向前兼容现有游戏流程
-无 linter 或编译错误（已通过静态检查）
-日志系统集成自曝、移交等关键事件广播
-退水倒计时与主循环异步协调，不阻塞其他玩家
+断线重连：Socket.IO 自动重连 → connect (auth.token) → user.sid = 新sid
+  → push_state(user) 推送待收消息 + 当前游戏状态 → 前端恢复房间视图
+```
 
-## 2025-11-23 更新补丁4
-room.py：放宽狼人自曝条件，只要处于警长竞选发言或 PK 发言阶段且仍存活的狼人都能看到“自曝”按钮，不再限制为当前发言人。
-room.py：保留先前实现的 10 秒警长投票倒计时（无新增修改，逻辑仍是到时未投票自动记弃票并立即结算）。
-room.py：遗言阶段始终广播“等待 X 号发动技能”，即使该玩家没有可发动的被动；他们的操作面板仍只有“放弃”按钮，点击后会立刻推进到遗言或下一阶段。
-已更新 witch.py：
-    当女巫已经完成毒/解药动作（acted_this_stage=True）时，skip() 会立即返回，不会再发送“今晚，你没有操作”。
-    若女巫只是选了目标但尚未确认，skip() 会清除暂存目标；只有在确实没有任何操作并选择放弃或超时时，才会发送“今晚，你没有操作”。
+---
 
-## 2025-11-23 更新补丁6
-- Added build_js_countdown_html() plus helper utilities in main.py that render the global timer as an inline JavaScript widget. Each time the stage transitions (wolves act, sheriff vote,遗言、警徽、放逐投票等), the server now injects a DOM block with a self-contained setInterval that animates the countdown entirely on the browser side—no more reliance on server-side sleep loops.
-- GLOBAL_COUNTDOWN_READY_HTML now clears any existing intervals so the timer can restart cleanly when phases end, and the main loop only re-renders the countdown scope when the phase key actually changes. Idle states reliably show “倒计时：准备中”.
-- Removed the async _global_display_countdown coroutine and all related bookkeeping; countdown tasks are now limited to the per-player input scopes, while the shared header timer is purely client-driven.
-- Added JS-driven global countdowns for speaking phases: last-word speeches now render a 120 s timer, while exile speeches show 120 s per speaker (150 s when it’s the sheriff during the regular exile round). get_global_countdown_context() now reports these durations with speaker-specific labels so everyone watching the board sees the same ticking clock.
-- Expanded the per-player countdown logic in main.py to start timers for exile speeches and to assign context-aware durations (120 s/150 s for speeches, 10 s for skills, 20 s for night actions). When a speech timer expires it auto-calls room.advance_exile_speech(), and cancelling is handled both on timeout and when the speaker clicks “发言完毕”.
-- Updated the stage gating so GameStage.EXILE_SPEECH/EXILE_PK_SPEECH count as timed phases, and ensured last-word speech timers also run for 120 s on both the UI scope and the global display.
-- All speech phases now follow the requested timing: sheriff竞选和PK发言、放逐及放逐PK发言均注入 120 s 倒计时，白天放逐阶段若轮到警长则自动展示 150 s。get_global_countdown_context()、全局 JS 计时器和玩家私有 _countdown() 均统一使用这些时长，并在超时后自动推进相应发言队列（含警长与放逐发言）。
-- 页面标题体验更新：初次打开默认显示 Moon Verdict 狼人杀法官助手，输入昵称后切换为 Moon Verdict： 欢迎<昵称>加入游戏，进入房间后继续沿用现有的动态房间标题逻辑。
+## 待开发和优化
 
-## 2025-11-24 更新补丁1
-1. witch.py: “不使用毒药” now immediately clears the pending target, marks the night as finished, and notifies the player, so the action window closes cleanly without wasting the poison. Poisoning a hunter still removes their gun, but wolf king poisoning no longer alters can_shoot.
-2. room.py: Nightly poison resolution now leaves the wolf king’s can_shoot flag intact, _start_bomb_last_words() keeps the skill prompt enabled so a self-bombing wolf king/hunter can fire, and can_wolf_self_bomb() lets any alive wolf self-bomb during police speeches, PK speeches, exile speeches, and the deferred-withdraw phase. Also added the blocking logic adjustments described above.
-3. Overall behavior: Wolf king poisoned overnight still sees “可以开枪”, self-bombing wolf kings can shoot as expected, and all wolves get the 自曝 button wherever the rules require.
-
-## 2025-11-24 更新补丁2
-1. Updated room.py so idiot sheriffs now broadcast the generic “请移交警徽”, flipped idiots stay alive, still deliver last words, and lose future voting rights without blocking the day flow. Added a badge-transfer window controller: the phase now always lasts 10 seconds (with a visible countdown) before continuing to the next stage, even if the decision is made immediately or times out automatically.
-2. Added wolf self-bomb flexibility (already addressed earlier) and ensured the white-idiot flow integrates cleanly with last-words and badge follow-ups.
-3. Fixed the seer’s “放弃” button in seer.py; it now works as a regular action, ends the night turn, and sends the required private message (“今夜，你放弃查验。”).
-
-## 2025-11-24 更新补丁3（摄梦人与夜间 UI 修复）
-- roles/guard.py：将“放弃”按钮改为普通选项并直接走 skip 逻辑，确保守卫操作窗口不会被 PyWebIO 的 cancel 事件提前关闭，倒计时结束也能正确落盘。
-- roles/dreamer.py：摄梦人面板现在列出所有玩家（自己与死亡目标为灰色不可点），选中后立刻收到“今夜，你选择让 X 号 Y 梦游”的私聊提示；新增 apply_logic 流水，自动处理梦游免疫、连续两晚指定的梦境吞噬，以及摄梦人出局时的连死判定。
-- models/room.py：夜间阶段顺序调整为“女巫 → 摄梦人 → 守卫”，并在结算时统一取消 dream_immunity、dream_forced_death 与 dreamer_nick；若猎人/狼王因梦境死亡或连死，会立即失去开枪资格并收到“你无法开枪。”的私聊，同时遗言阶段的“发动技能”按钮默认置灰。
-- main.py：遗言操作面板会根据 can_shoot 状态禁用“发动技能”按钮，并阻止猎人或狼王在枪被锁定时进入技能模式，提示玩家只能“放弃”。
-- roles.md：在摄梦人条目中补充“不能对自己发动技能”的说明，使规则文档与最新客户端行为一致。
-
-## 2025-11-24 更新补丁4（混血儿角色与第一夜流程）
-- enums.py：新增 GameStage.HALF_BLOOD 以及 Role.HALF_BLOOD 选项，并将“混血儿”纳入可选神职列表，方便房间配置直接勾选。
-- roles/half_blood.py（新文件）：实现混血儿角色，第一夜最先睁眼，须选择一名血亲；确认后立即绑定阵营，若放弃或超时则系统随机指派，未能选定时默认按好人阵营计。
-- models/room.py：在夜晚流程最前插入混血儿阶段并在超时后调用 ensure_choice() 自动落盘；role_classes 注册新角色，胜负结算依据 half_blood_camp 判断其归属，使其在判定屠民/屠狼时跟随血亲阵营。
-- main.py：将混血儿阶段加入夜间倒计时/确认逻辑与全局倒计时标签，计时结束会沿用统一的 skip→自动指派流程；私有倒计时也会检测 pending_half_blood_target。
-- roles/seer.py：无论混血儿被绑定到哪个阵营，预言家查验始终返回“好人”，符合角色设定。
-- roles.md：第三方阵营章节更新混血儿条目，记录“第一夜最先行动、不可选自己、预言家永远验好”的新机制。
-
-## 2025-11-24 更新补丁5（白狼王）
-- enums.py：新增 Role.WHITE_WOLF_KING；room 角色映射与房间配置现在支持在板子中直接添加白狼王。
-- roles/white_wolf_king.py（新文件）：白狼王继承狼人夜间投票能力，并在发言/退水阶段提供单独面板提前锁定自爆时要带走的目标。
-- models/room.py：统一将白狼王计入狼阵营，胜负判定、夜间信息、狼人票数广播等逻辑全部识别该身份；自曝入口会校验“必须不是最后一狼”与“已锁定目标”，并在自曝后立刻调用新增的击杀流程，把选定玩家送入技能/遗言队列。
-- roles/wolf.py 与 roles/seer.py：狼人投票广播、查验结果等都把白狼王视为狼人；roles/half_blood.py 也会把认父到白狼王的混血儿划入狼阵营。
-- README/roles.md：补充白狼王技能描述与最新限制条件，提醒只能在发言/退水阶段现形，且自曝前需预先在面板选择击杀对象。
-
-## 2025-11-24 更新补丁6（白狼王自曝结算细化）
-1. models/room.py：新增 `pending_day_bombs`/`white_wolf_pending_kills` 队列，白狼王自曝会先把目标写入队列并延迟到公告阶段后统一进入遗言流程，避免房主在“昨夜信息”广播前插队、也确保所有被强制带走的玩家先处理被动技能再公布结果。
-2. `_start_bomb_last_words()`/`_trigger_pending_day_bomb_flow()` 现在会根据自曝来源自动跳过白狼王本人的遗言、禁止临时发言、并在遗言队列中插入被带走的玩家；日阶段会记录 `pending_announcement_broadcast`，只有当所有炸弹流程结束后才提示“请房主公布昨夜信息”。
-3. 夜里若仅有一名玩家死亡，`publish_night_info()` 会改播“昨夜 X 死亡，等待玩家发动技能”，并在猎人/白狼王技能阶段结束后再提示发言，使所有强制死亡都能进入“等待发动技能→遗言”这一完整链路。
-4. roles/wolf.py：狼人点击“放弃”或直接确认空刀都会给狼同伴发私聊（如“7 号选择放弃”），便于队友知晓当前进度；自曝/炸弹逻辑依赖所有狼人尽快完成人数确认，该提示可以减少卡夜的情况。
-
-## 2025-11-24 更新补丁7（大厅与房间弹窗体验）
-- 大厅界面常驻：输入昵称后会进入固定的“大厅”按钮区，点击“创建房间”或“加入房间”只会弹出小窗口，背景大厅不再被覆盖或闪烁。
-- 创建房间弹窗：按照“自定义 / 12人版型 / 开发者测试版型”三段分组呈现预设按钮，右上角支持 ✕ 关闭；选择“手动配置”后仍可进入原有的完整配置表单，取消任一步骤都会返回大厅。
-- 加入房间弹窗：房号输入框与“加入房间”按钮同排显示、整体留白更紧凑；下方的“房间信息”列表改为可点击按钮，直接填入房号并尝试加入，同时保留一键刷新以更新房间余量。
-- 弹窗均可随时通过 ✕ 关闭并返回大厅，确保玩家误触时不用重新加载页面；加入逻辑也在房间关闭后提示“房间不存在或已关闭”而不是直接报错。
-
-## 2025-11-25 大厅模块拆分与文档同步
-1. 将大厅页面、房间预设、外部链接、房间加入等逻辑从 `main.py` 抽离到 `models/lobby.py`，`main.py` 仅负责调用异步接口。
-2. `make_scope_name()` 移动到 `utils.py`，方便大厅与其它界面共享统一的 Scope 命名策略。
-3. README 重新梳理模块分层与运行流程，突出大厅模块的位置，方便后续维护大厅 UI。
-
-## 2025-11-25 结构与 UI 更新
-1. **Preset 目录重组**
-    - 新增顶级 `presets/` 目录，集中存放 `base.py`（新版共享流程）以及所有 `game_config_*.py` 版型脚本，旧路径 `game_config_base.py` 仅保留兼容层。
-    - 提供 `presets/__init__.py`，并让 `models/room.py`、`models/lobby.py` 统一从 `presets.*` 导入 BaseGameConfig、预设元数据与注册表，消除 `models` 与版型模块的耦合。
-    - 清理 `game_config_registry.py` 中残留的补丁标记，避免在 `python main.py` 启动时因语法错误导致导入失败。
-2. **大厅“创建房间”弹窗体验**
-    - 关闭按钮固定在弹窗右上角，不再占据正文布局空间。
-    - Popup 根据内容自适应高度，设定 `max-height: calc(100vh - 260px)` 上限，必要时自动出现滚动条，彻底解决下方大量空白的问题。
-    - 同时复用新的样式字符串，保证弹窗宽度约为 520px，在桌面端与移动端都保持一致的排版。
-3. **新增「预女猎尾」预设与九尾妖狐角色**
-    - 构建 `presets/game_config_nine_tailed_fox.py`，支持 4 狼 + 4 民 + 预女猎 + 九尾妖狐的 12 人版型，行动顺序为狼→预→女→猎→妖狐。
-    - `roles/nine_tailed_fox.py` 实现「幻尾」技能：追踪尾巴数、夜间提示、扣至 0 条时自动退场，并在 `Room` 与 `DefaultGameFlow` 中统一结算。
-    - 新 preset 在大厅按钮列表中以“预女猎尾”呈现，可与既有 12 人版型同列自助创建。
-
-## 2025-11-25 Runtime Mixins（Moonlight 分支）
-1. 新增 `models/room_runtime.RoomRuntimeMixin`，并拆分出 `models/runtime/sheriff.py`、`models/runtime/daytime.py` 与 `models/runtime/tools.py`，将上警/白天/遗言/徽章等运行时逻辑从 `room.py` 中完全抽离。
-2. `presets/base.py` 成为 `BaseGameConfig`/`DefaultGameFlow` 的权威入口，`presets/game_config_base.py` 保留为兼容层；全部预设脚本已经切换到新的导入路径。
-3. 修复警长选择顺序缺失 `_build_directional_queue()` 报错的问题，并确保无警长或超时时会自动生成完整的顺序/逆序队列。
-4. UX 小修复：九尾妖狐每夜首次睁眼会收到私聊提示尾巴数，并在确认后清理提示；狼人阶段使用 `wolf_action_done` 标记避免提前结束等待。
-5. 如需深入了解新的混入结构以及测试检查清单，请参考 [`doc/runtime-refactor.md`](doc/runtime-refactor.md)。
-
-## 2025-11-25 README 资源同步
-- README 顶部的文档链接与预览截图已统一指向新的 `doc/` 与 `pics/` 目录，避免在移动文件后出现 404。
-- `# Update Notes` 去重并合并了重复条目，方便在底部快速查阅补丁历史。
-
-## 2025-11-25 大厅与座位 UX 更新
-- **大厅更聚焦**：大厅只保留创建/加入房间和资料按钮。聊天窗口、倒计时与“刷新操作窗口”按钮只在进入房间后才渲染，并在离开房间时统一清理。
-- **座位面板**：操作窗口下方新增“座位”面板，实时展示所有号码牌。空位以绿色可点击按钮呈现，可直接换座；已被占用的座位为灰色并显示玩家昵称。
-- **即时同步**：玩家进入/离开房间或更换座位时，面板自动刷新。新加入的玩家会收到一条私聊提示“你当前的号码牌：X号”，同时面板立即反映当前占座情况。
-- 相关实现集中在 `main.py`（Scope 控制、面板渲染）与 `models/room.py`（座位快照）以及 `models/user.py`（消息流）。
-
-## 2025-11-26 放逐流程文档同步
-- `doc/rules.md` 新增“放逐流程说明”，明确定义平票进入 PK、只有非对决玩家参与放逐对决投票，以及再次平票判定平安日的判罚。
-- 当前实现（`models/runtime/daytime.py` 的 `start_exile_vote()` / `finish_exile_vote()` / `start_exile_pk_speech()`）已严格按照上述流程执行：首轮投票所有在场生者可投，平票时只允许非 PK 玩家在二轮投票中表决，若再度平票则广播“放逐失败，无人出局”并结束本日流程，因此无需额外代码调整。
-
-## 2025-11-27 Nightmare 补丁摘要
-
-- 新增 `roles/nightmare.py` 与 `presets/game_config_nightmare.py`，提供“梦魇 - 预女猎守”12 人板与独立恐惧阶段：梦魇可先手指定目标恐惧（当夜禁止行动），支持首夜恐惧狼队友触发强制空刀、禁止连续恐惧等规则。
-- `roles/base.py` 新增 `notify_fear_block()`，并在守卫/预言家/女巫/摄梦人/九尾/猎人/狼王/狼人等角色调用，确保被梦魇恐惧的玩家都会收到一次性私聊提示且行动按钮被移除。
-- `roles/wolf.py` 及梦魇的狼阶段跳过逻辑接入 `skip_reason`，区分“手动放弃/倒计时超时”与刷新干扰，修复狼人已锁定目标却仍重复播报“放弃击杀”的问题，同时在确认投票后会自动取消倒计时任务避免二次触发。
-
-## 2025-11-27 Nightmare 热修补丁
-
-- 恐惧提示仅在对应角色的夜间阶段触发：守卫/预言家/女巫/摄梦人/九尾妖狐会先确认 `room.stage`，然后才调用 `notify_fear_block()`，避免玩家在梦魇阶段提前收到“无法行动”的私聊而暴露行动顺序。
-- 梦魇阶段加入 20 秒全局倒计时标签，私有面板亦保持倒计时跑满；狼人即便首夜被恐惧导致强制空刀也会看到"无法行动/空刀中"的只读按钮并等待 20 秒，外界无法以倒计时长短推断其生死。
-- `presets/base.py::wait_for_player()` 支持最小等待时长、自动释放和静默超时，梦魇阶段与强制空刀阶段会在 20 秒后自动放行；若倒计时期间没有玩家动作也不会重复广播超时。
-- `roles/wolf.py` 针对被恐惧或强制空刀的狼自动打上 `wolf_action_done`，并通过只读按钮阻断任何击杀/放弃输入，确保所有狼都得等待倒计时结束再进入下一阶段。
-
-## 2025-11-27 狼美人版型新增
-
-- 新增 `roles/wolf_beauty.py`，实现狼美人角色：
-  - 狼美人属于狼队阵营，每晚可魅惑一名玩家
-    - 狼人阶段与普通狼一起投票，狼美人阶段单独行动选择魅惑目标（同样显示 20 秒倒计时 Confirm）
-    - 狼人夜刀界面会自动屏蔽狼美人作为刀口，系统也移除了狼美人的自曝入口
-    - 狼美人出局时（放逐/毒杀/梦死/猎人或狼王射杀等），被魅惑者殉情出局且无技能（猎人闷枪、狼王不能开爪）
-    - 魅惑目标不可与上一晚相同，面板会给出禁用提示并在服务器端再次校验
-- 新增 `presets/game_config_wolf_beauty.py`，提供"狼美人 - 预女猎守"12 人版型：
-  - 角色配置：1 狼美人 + 3 普狼 + 4 村民 + 预言家 + 女巫 + 猎人 + 守卫
-  - 行动顺序：狼人+狼美人 → 狼美人 → 守卫 → 预言家 → 女巫 → 猎人
-- 在 `presets/base.py` 和 `models/runtime/daytime.py` 中添加殉情处理逻辑，确保狼美人死亡时被魅惑者正确出局
-
-## 2025-11-27 狼美人补丁摘要
-- **新增狼美人角色**：`roles/wolf_beauty.py` 实现完整魅惑/确认/殉情逻辑，并在 `doc/roles.md` 与 `enums.py` 中登记阵营、阶段常量；`presets/game_config_wolf_beauty.py`、`game_config_presets.py`、`game_config_registry.py` 新增示例板子，方便快速体验该角色。
-- **夜晚流程接入**：`presets/base.py` 把狼美人阶段插入狼人之后、预言家之前，所有 `models/room*.py`、`models/runtime/*.py` 同步处理 `GameStage.WOLF_BEAUTY`，确保 UI/广播、waiting 状态、日志与胜负判定均覆盖魅惑阶段。
-- **操作体验强化**：`main.py` 的全局倒计时新增“狼美人魅惑倒计时”，并在玩家刷新或手动取消时妥善保留 `pending_charm`；`utils.async_sleep()` 现在在 PyWebIO 环境失效时会关闭协程，彻底消除 RuntimeWarning。
-- **殉情结算修复**：`models/runtime/daytime.py` 再次放逐狼美人时会查找其 `charm_target` 并立即令目标殉情（禁止猎人等技能），`presets/base.py` 的等待超时回调也会在结束阶段前驱动 confirm()/skip，防止刷新或倒计时任务被取消后漏结算。
-- **角色/文档同步**：`roles/wolf.py` 避免在魅惑阶段重复开启狼人投票 UI，`roles/seer.py`/`roles/*.py` 对狼美人对齐查验结果；`doc/roles.md` 与 README 身份介绍加入“狼美人夜里魅惑一人、若其被毒/梦/放逐或被猎人等射杀则魅惑对象殉情出局且无技能”的官方说明。
-
-## 2025-11-28 警上竞选倒计时补丁
-- In main.py the countdown timeout handler now whitelists all voting/action day stages (上警报名、警长投票/PK、徽章移交、遗言、放逐投票/PK 以及相关发言阶段). Even if room.waiting 已经是 False，这些阶段的 10s 倒计时结束后仍会触发原有的超时逻辑：上警报名自动记录“不上警”、警长竞选/PK 投票自动记“弃票”、放逐/PK 投票自动记“弃票”，徽章/遗言/发言阶段也能继续强制推进，避免计时停止后仍在等待玩家操作。
-- In wolf.py the放弃按钮和超时放弃都会给本人一条私聊“你放弃选择”，符合“Private: 你放弃选择”的提示要求，其他狼人仍然会收到该狼的状态广播。
-
-## 2025-11-29
-- 放逐投票计票支持警长单点归票加成：当警长投出有效票时系统默认按 1.5 票计权，无需额外 UI 操作，`doc/rules.md` 第十七条已更新说明。
-- 常规发言顺序引擎升级：无警长时系统自动根据昨夜死者座位随机选择“死左/死右”，或在平安夜/多人出局时同时随机方向与首发玩家；有警长时支持按规则从死者或警长座位起号，必要时自动将警长压轴。
-- `doc/rules.md` 第三十六条同步描述上述规则，便于线下主持与线上实现保持一致。
-- 放逐投票计票支持警长单点归票加成：当警长投出有效票时系统默认按 1.5 票计权，无需额外 UI 操作，`doc/rules.md` 第十七条已更新说明。
-- 胜负判定遵循屠神/屠民与第三方优先规则：`presets/base.py::check_game_end()` 现按第十三条、第42条结算，狼阵营屠边优先，第三方需“屠城”方可独赢。
+1. TTS 目前仅支持 macOS / Windows，需要支持更多平台
+2. 多平台 Standalone executable
+3. 消息历史（`room.log`）无限增长，超 50000 条时截断，大型游戏可改为 Redis 持久化
+4. 多进程部署需配置 `python-socketio` 的 `AsyncRedisManager`，目前适合单进程运行
+5. `reconnect_token` 仅做内存校验，服务重启后所有用户需重新登录，可用 signed JWT 实现跨重启持久化

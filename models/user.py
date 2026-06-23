@@ -1,28 +1,21 @@
 # models/user.py
-import html
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING, Any
-
-from pywebio.session import run_async
-from pywebio.output import output, put_html
-from pywebio.session import get_current_session
-from pywebio.session.coroutinebased import TaskHandler
 
 from enums import Role, PlayerStatus, LogCtrl
 from models.system import Config, Global
-from stub import OutputHandler
 from . import logger
-from utils import async_sleep
 
 if TYPE_CHECKING:
     from .room import Room
     from roles.base import RoleBase
 
+
 @dataclass
 class User:
     nick: str
-    main_task_id: Any
-    input_blocking: bool = False
+    sid: Optional[str]          # current Socket.IO session id; None = disconnected
+    reconnect_token: str        # stored in browser localStorage for reconnection
 
     room: Optional['Room'] = None
     role: Optional[Role] = None
@@ -31,8 +24,8 @@ class User:
     status: Optional[PlayerStatus] = None
     seat: Optional[int] = None
 
-    game_msg: OutputHandler = None
-    game_msg_syncer: Optional[TaskHandler] = None
+    message_cursor: int = 0     # next index in room.log to deliver to this user
+    input_blocking: bool = False
 
     def __post_init__(self):
         if self.skill is None:
@@ -46,15 +39,13 @@ class User:
                 'curr_dream_target': None,
                 'dreamer_nick': None,
                 'sheriff_vote': None,
-                'acted_this_stage': False,  # 必须初始化
+                'acted_this_stage': False,
                 'last_words_skill_resolved': False,
                 'last_words_done': False,
                 'pending_last_skill': False,
                 'exile_vote_pending': False,
                 'exile_has_balloted': False,
             }
-        if self.game_msg is None:
-            self.game_msg = output()
 
     def send_msg(self, text: str):
         if self.room:
@@ -62,64 +53,47 @@ class User:
         else:
             logger.warning('在玩家非进入房间状态时调用了 User.send_msg()')
 
-    async def _game_msg_syncer(self):
-        last_idx = len(self.room.log) if self.room else 0
-        while True:
-            if not self.room: break
-            for msg in self.room.log[last_idx:]:
-                if msg[0] == self.nick:
-                    # 私聊消息以红色显示
-                    self.game_msg.append(put_html(f"<div style='color:red'>Private: {msg[1]}</div>"))
-                elif msg[0] == Config.SYS_NICK:
-                    payload = msg[1]
-                    speak_text = ''
-                    has_tts = False
-                    if isinstance(payload, dict):
-                        speak_text = str(payload.get('text', '') or '')
-                        has_tts = bool(payload.get('tts')) and bool(speak_text)
-                    else:
-                        speak_text = str(payload)
-                    safe_display = html.escape(speak_text)
-                    snippet = f"<div>Public: {safe_display}</div>"
-                    if has_tts:
-                        js_text = speak_text.replace('\\', '\\\\').replace("'", "\\'").replace('\n', ' ').replace('\r', ' ')
-                        snippet += f"<script>window.MoonVerdictSpeech && window.MoonVerdictSpeech('{js_text}');</script>"
-                    self.game_msg.append(put_html(snippet))
-                elif msg[0] is None and msg[1] == LogCtrl.RemoveInput and self.input_blocking:
-                    get_current_session().send_client_event({
-                        'event': 'from_cancel',
-                        'task_id': self.main_task_id,
-                        'data': None
-                    })
-            if len(self.room.log) > 50000:
-                self.room.log = self.room.log[len(self.room.log)//2:]
-            last_idx = len(self.room.log)
-            await async_sleep(0.2)
-
-    def start_syncer(self):
-        if self.game_msg_syncer: raise AssertionError
-        self.game_msg_syncer = run_async(self._game_msg_syncer())
-
-    def stop_syncer(self):
-        if not self.game_msg_syncer or self.game_msg_syncer.closed(): raise AssertionError
-        self.game_msg_syncer.close()
-        self.game_msg_syncer = None
+    def get_pending_messages(self) -> list:
+        """Return log entries since message_cursor that this user should see, then advance cursor."""
+        if not self.room:
+            return []
+        msgs = []
+        log = self.room.log
+        for sender, content in log[self.message_cursor:]:
+            if sender == self.nick:
+                # Private message for this player
+                msgs.append({'type': 'private', 'text': str(content)})
+            elif sender == Config.SYS_NICK:
+                # Public broadcast
+                if isinstance(content, dict):
+                    msgs.append({'type': 'public', 'text': content.get('text', ''), 'tts': bool(content.get('tts'))})
+                else:
+                    msgs.append({'type': 'public', 'text': str(content), 'tts': False})
+            elif sender is None and content == LogCtrl.RemoveInput:
+                msgs.append({'type': 'cancel_input'})
+            # else: private message addressed to another user – skip
+        self.message_cursor = len(log)
+        return msgs
 
     def skip(self, reason: Optional[str] = None):
-        """Trigger the current role's skip logic, optionally annotating the reason."""
         self.skill['skip_reason'] = reason
         if self.role_instance:
             self.role_instance.skip()
 
     @classmethod
     def validate_nick(cls, nick) -> Optional[str]:
+        if not nick:
+            return '昵称不能为空'
+        if len(nick) > 16:
+            return '昵称不能超过16个字符'
         if nick in Global.users or Config.SYS_NICK in nick:
             return '昵称已被使用'
 
     @classmethod
-    def alloc(cls, nick, init_task_id) -> 'User':
-        if nick in Global.users: raise ValueError("用户已存在")
-        user = cls(nick=nick, main_task_id=init_task_id)
+    def alloc(cls, nick: str, sid: str, reconnect_token: str) -> 'User':
+        if nick in Global.users:
+            raise ValueError('用户已存在')
+        user = cls(nick=nick, sid=sid, reconnect_token=reconnect_token)
         Global.users[nick] = user
         logger.info(f'用户 "{nick}" 登录')
         return user

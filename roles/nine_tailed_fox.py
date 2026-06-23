@@ -1,6 +1,6 @@
 # roles/nine_tailed_fox.py
 from typing import List
-from pywebio.input import actions
+from stub import actions
 
 from enums import GameStage, PlayerStatus, Role
 from .base import RoleBase, player_action

@@ -6,9 +6,6 @@ from copy import copy
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple, Union, Any
 
-from pywebio.session import run_async
-from pywebio.session.coroutinebased import TaskHandler
-
 from enums import Role, WitchRule, GuardRule, SheriffBombRule, GameStage, LogCtrl, PlayerStatus
 from presets.base import BaseGameConfig
 from presets.game_config_registry import resolve_game_config_class
@@ -69,7 +66,7 @@ class Room(RoomRuntimeMixin):
     log: List[Tuple[Union[str, None], Union[str, LogCtrl, Dict[str, Any]]]] = field(default_factory=list)
     skill: Dict[str, Any] = field(default_factory=dict)
 
-    logic_thread: Optional[TaskHandler] = None
+    logic_thread: Optional[asyncio.Task] = None
     game_over: bool = False
     _game_config: Optional[BaseGameConfig] = field(default=None, init=False, repr=False)
 
@@ -83,7 +80,10 @@ class Room(RoomRuntimeMixin):
     seat_state_version: int = 0
 
     async def start_game(self):
-        if self.started or len(self.players) < len(self.roles):
+        if self.started:
+            return
+        if len(self.players) < len(self.roles):
+            self.broadcast_msg(f'需要 {len(self.roles)} 名玩家才能开始，当前只有 {len(self.players)} 人')
             return
         standing_players = [u for u in self.players.values() if not u.seat]
         if standing_players:
@@ -92,6 +92,21 @@ class Room(RoomRuntimeMixin):
             return
         self.started = True
         self.game_over = False
+        # Reset runtime state from any previous game
+        self.round = 0
+        self.stage = None
+        self.waiting = False
+        self.skill.clear()
+        self.day_state.clear()
+        self.sheriff_state.clear()
+        self.death_pending.clear()
+        self.current_speaker = None
+        self.sheriff_speakers = None
+        self.sheriff_speaker_index = 0
+        self.sheriff_badge_destroyed = False
+        if self.logic_thread and self.logic_thread.done():
+            self.logic_thread = None
+        self.roles_pool = list(self.roles)
         self._ensure_game_config()
         # 在游戏开始时添加公共隔断，提升可读性
         self.broadcast_msg('=' * 22)
@@ -121,8 +136,7 @@ class Room(RoomRuntimeMixin):
         await async_sleep(3)
 
         if not self.logic_thread:
-            self.logic_thread = run_async(self.game_loop())
-        self.waiting = False
+            self.logic_thread = asyncio.create_task(self.game_loop())
 
     def is_full(self) -> bool:
         return len(self.players) >= len(self.roles)
@@ -133,10 +147,9 @@ class Room(RoomRuntimeMixin):
         seat = self._pick_available_seat(user.seat)
         self.players[user.nick] = user
         user.room = self
-        user.start_syncer()
+        user.message_cursor = len(self.log)
         user.seat = seat
         status = f'【{user.nick}】进入房间，人数 {len(self.players)}/{len(self.roles)}，房主是 {self.get_host().nick}'
-        user.game_msg.append(status)
         self.broadcast_msg(status)
         logger.info(f'用户 "{user.nick}" 加入房间 "{self.id}"，座位 {user.seat}')
         user.send_msg(f'你当前的号码牌：{user.seat}号')
@@ -146,7 +159,6 @@ class Room(RoomRuntimeMixin):
         if user.nick not in self.players:
             raise AssertionError
         self.players.pop(user.nick)
-        user.stop_syncer()
         user.room = None
         user.seat = None
         if not self.players:
@@ -236,20 +248,27 @@ class Room(RoomRuntimeMixin):
 
     @classmethod
     def alloc(cls, room_setting) -> 'Room':
+        if not isinstance(room_setting, dict):
+            raise TypeError(f'room_setting must be a dict, got {type(room_setting).__name__}')
         roles: List[Role] = []
-        roles.extend([Role.WOLF] * room_setting['wolf_num'])
-        roles.extend([Role.CITIZEN] * room_setting['citizen_num'])
-        roles.extend(Role.from_option(room_setting['god_wolf']))
-        roles.extend(Role.from_option(room_setting['god_citizen']))
+        roles.extend([Role.WOLF] * room_setting.get('wolf_num', 0))
+        roles.extend([Role.CITIZEN] * room_setting.get('citizen_num', 0))
+        roles.extend(Role.from_option(room_setting.get('god_wolf', [])))
+        roles.extend(Role.from_option(room_setting.get('god_citizen', [])))
 
+        from presets.game_config_presets import DEFAULT_ROOM_RULES
         return Global.reg_room(
             cls(
                 id=None,
                 roles=copy(roles),
-                witch_rule=WitchRule.from_option(room_setting['witch_rule']),
-                guard_rule=GuardRule.from_option(room_setting['guard_rule']),
+                witch_rule=WitchRule.from_option(
+                    room_setting.get('witch_rule', DEFAULT_ROOM_RULES['witch_rule'])
+                ),
+                guard_rule=GuardRule.from_option(
+                    room_setting.get('guard_rule', DEFAULT_ROOM_RULES['guard_rule'])
+                ),
                 sheriff_bomb_rule=SheriffBombRule.from_option(
-                    room_setting.get('sheriff_bomb_rule', SheriffBombRule.DOUBLE_LOSS.value)
+                    room_setting.get('sheriff_bomb_rule', DEFAULT_ROOM_RULES['sheriff_bomb_rule'])
                 ),
                 started=False,
                 roles_pool=copy(roles),
