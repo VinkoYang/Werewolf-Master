@@ -73,13 +73,9 @@ def _room_config_text(room: Room) -> str:
              f"守卫：{room.guard_rule.value}｜"
              f"自曝：{room.sheriff_bomb_rule.value}")
     if Role.MECHANICAL_WOLF in room.roles:
-        mw_opts = []
-        if getattr(room, 'mw_shield_blocks_hunter', False):
-            mw_opts.append('机械盾抵挡猎枪')
-        if getattr(room, 'mw_double_knife_breaks_shield', False):
-            mw_opts.append('双刀破盾')
-        if mw_opts:
-            rules += '｜' + '｜'.join(mw_opts)
+        shield = '机械盾抵挡猎枪' if getattr(room, 'mw_shield_blocks_hunter', False) else '机械盾不挡猎枪'
+        knife = '双刀可破盾' if getattr(room, 'mw_double_knife_breaks_shield', False) else '双刀不可破盾'
+        rules += f'｜机械狼：{shield}｜{knife}'
     return f"共 {total} 人 | {'、'.join(parts)} | {rules}"
 
 
