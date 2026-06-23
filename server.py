@@ -428,6 +428,9 @@ def _get_countdown_context(room: Optional[Room]) -> Tuple[Optional[str], Optiona
         GameStage.WOLF_KING: '狼王确认',
         GameStage.DREAMER: '摄梦人阶段',
         GameStage.NINE_TAILED_FOX: '九尾妖狐阶段',
+        GameStage.MECHANICAL_WOLF_LEARN: '机械狼学习',
+        GameStage.MECHANICAL_WOLF_ACT: '机械狼行动',
+        GameStage.MAGIC_MIRROR_GIRL: '通灵师查验',
     }
     if stage in night_labels:
         key = f"{stage.name}_round{room.round}"
@@ -498,7 +501,10 @@ def _get_countdown_context(room: Optional[Room]) -> Tuple[Optional[str], Optiona
 
 NIGHT_STAGES = {GameStage.HALF_BLOOD, GameStage.NIGHTMARE, GameStage.WOLF,
                 GameStage.WOLF_BEAUTY, GameStage.SEER, GameStage.WITCH,
-                GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER}
+                GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER,
+                GameStage.NINE_TAILED_FOX,
+                GameStage.MECHANICAL_WOLF_LEARN, GameStage.MECHANICAL_WOLF_ACT,
+                GameStage.MAGIC_MIRROR_GIRL}
 DAY_TIMER_STAGES = {GameStage.SHERIFF, GameStage.LAST_WORDS, GameStage.EXILE_VOTE,
                     GameStage.EXILE_PK_VOTE, GameStage.BADGE_TRANSFER,
                     GameStage.EXILE_SPEECH, GameStage.EXILE_PK_SPEECH, GameStage.SPEECH}
@@ -568,7 +574,8 @@ async def _countdown(user: User, seconds: int):
             else:
                 pending_keys = ['wolf_choice', 'pending_charm', 'pending_protect',
                                 'pending_dream_target', 'pending_target',
-                                'pending_half_blood_target', 'pending_fear']
+                                'pending_half_blood_target', 'pending_fear',
+                                'pending_learn', 'pending_act_target', 'mw_first_knife']
                 has_pending = any(user.skill.get(k) for k in pending_keys)
                 if (user.role_instance and user.role_instance.needs_global_confirm and
                         hasattr(user.role_instance, 'confirm')):

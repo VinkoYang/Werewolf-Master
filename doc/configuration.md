@@ -443,8 +443,4 @@ markdown_content = """# 狼人杀特殊版型规则整理
 - 每晚查验一名玩家的具体身份（不可重复查验同一玩家）
 """
 
-# Write to a Markdown file
-with open("狼人杀规则整理.md", "w", encoding="utf-8") as f:
-    f.write(markdown_content)
 
-print("Markdown 文件已生成：狼人杀规则整理.md，包含目录和完整内容。")
