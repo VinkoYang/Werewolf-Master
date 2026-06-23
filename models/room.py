@@ -57,7 +57,7 @@ role_classes = {
 class Room(RoomRuntimeMixin):
     id: Optional[int] = None
     roles: List[Role] = field(default_factory=list)
-    witch_rule: WitchRule = WitchRule.SELF_RESCUE_FIRST_NIGHT_ONLY
+    witch_rule: WitchRule = WitchRule.NO_SELF_RESCUE
     guard_rule: GuardRule = GuardRule.MED_CONFLICT
     sheriff_bomb_rule: SheriffBombRule = SheriffBombRule.DOUBLE_LOSS
 
@@ -82,6 +82,10 @@ class Room(RoomRuntimeMixin):
     day_state: Dict[str, Any] = field(default_factory=dict)
     sheriff_badge_destroyed: bool = False
     seat_state_version: int = 0
+
+    # --- 机械狼专属配置（仅含机械狼角色时生效）---
+    mw_shield_blocks_hunter: bool = False      # 机械盾是否抵挡猎人子弹
+    mw_double_knife_breaks_shield: bool = False # 双刀狼双刀是否可破盾
 
     async def start_game(self):
         if self.started:
@@ -261,6 +265,7 @@ class Room(RoomRuntimeMixin):
         roles.extend(Role.from_option(room_setting.get('god_citizen', [])))
 
         from presets.game_config_presets import DEFAULT_ROOM_RULES
+        has_mw = Role.MECHANICAL_WOLF in roles
         return Global.reg_room(
             cls(
                 id=None,
@@ -274,6 +279,8 @@ class Room(RoomRuntimeMixin):
                 sheriff_bomb_rule=SheriffBombRule.from_option(
                     room_setting.get('sheriff_bomb_rule', DEFAULT_ROOM_RULES['sheriff_bomb_rule'])
                 ),
+                mw_shield_blocks_hunter=bool(room_setting.get('mw_shield_blocks_hunter', False)) if has_mw else False,
+                mw_double_knife_breaks_shield=bool(room_setting.get('mw_double_knife_breaks_shield', False)) if has_mw else False,
                 started=False,
                 roles_pool=copy(roles),
                 players=dict(),

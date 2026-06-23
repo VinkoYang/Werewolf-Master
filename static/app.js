@@ -385,6 +385,10 @@ function showReconfigureModal(config) {
   if (config.witch_rule) document.getElementById('c-witch-rule').value = config.witch_rule;
   if (config.guard_rule) document.getElementById('c-guard-rule').value = config.guard_rule;
   if (config.sheriff_bomb_rule) document.getElementById('c-bomb-rule').value = config.sheriff_bomb_rule;
+  const hasMw = (config.god_wolf || []).includes('机械狼');
+  toggleMwRules(hasMw);
+  document.getElementById('c-mw-shield-rule').value = config.mw_shield_blocks_hunter ? 'true' : 'false';
+  document.getElementById('c-mw-double-knife-rule').value = config.mw_double_knife_breaks_shield ? 'true' : 'false';
   document.getElementById('custom-modal-title').textContent = '修改房间配置';
   document.getElementById('custom-modal-submit').textContent = '保存配置';
   document.getElementById('custom-modal').style.display = 'block';
@@ -432,9 +436,9 @@ function populateCustomModal(data) {
   const witchSel = document.getElementById('c-witch-rule');
   if (!witchSel.options.length) {
     [
+      ['不可自救',       '不可自救'],
       ['仅第一夜可自救', '仅第一夜可自救'],
       ['始终可自救',     '始终可自救'],
-      ['不可自救',       '不可自救'],
     ].forEach(([label, val]) => {
       const o = document.createElement('option');
       o.value = val; o.textContent = label;
@@ -455,8 +459,8 @@ function populateCustomModal(data) {
   const bombSel = document.getElementById('c-bomb-rule');
   if (!bombSel.options.length) {
     [
-      ['单爆吞警徽', '单爆吞警徽'],
       ['双爆吞警徽', '双爆吞警徽'],
+      ['单爆吞警徽', '单爆吞警徽'],
     ].forEach(([label, val]) => {
       const o = document.createElement('option');
       o.value = val; o.textContent = label;
@@ -468,17 +472,22 @@ function populateCustomModal(data) {
   const godWolfDiv = document.getElementById('c-god-wolf-opts');
   if (!godWolfDiv.children.length) {
     godWolfDiv.innerHTML = '<strong>特殊狼：</strong><br>';
-    ['狼王', '白狼王', '梦魇', '狼美人'].forEach(role => {
-      godWolfDiv.innerHTML += `<label style="margin-right:12px;"><input type="checkbox" name="god_wolf" value="${role}"> ${role}</label>`;
+    ['狼王', '白狼王', '梦魇', '狼美人', '机械狼'].forEach(role => {
+      const onchange = role === '机械狼' ? ' onchange="toggleMwRules(this.checked)"' : '';
+      godWolfDiv.innerHTML += `<label style="margin-right:12px;"><input type="checkbox" name="god_wolf" value="${role}"${onchange}> ${role}</label>`;
     });
   }
   const godCitizenDiv = document.getElementById('c-god-citizen-opts');
   if (!godCitizenDiv.children.length) {
     godCitizenDiv.innerHTML = '<strong>特殊村民：</strong><br>';
-    ['预言家', '女巫', '守卫', '猎人', '摄梦人', '白痴', '混血儿', '九尾妖狐'].forEach(role => {
+    ['预言家', '女巫', '守卫', '猎人', '摄梦人', '白痴', '混血儿', '九尾妖狐', '通灵师'].forEach(role => {
       godCitizenDiv.innerHTML += `<label style="margin-right:12px;"><input type="checkbox" name="god_citizen" value="${role}"> ${role}</label>`;
     });
   }
+}
+
+function toggleMwRules(checked) {
+  document.getElementById('c-mw-rules').style.display = checked ? 'block' : 'none';
 }
 
 function submitCustomRoom() {
@@ -490,6 +499,8 @@ function submitCustomRoom() {
     witch_rule:    document.getElementById('c-witch-rule').value,
     guard_rule:    document.getElementById('c-guard-rule').value,
     sheriff_bomb_rule: document.getElementById('c-bomb-rule').value,
+    mw_shield_blocks_hunter:      document.getElementById('c-mw-shield-rule').value === 'true',
+    mw_double_knife_breaks_shield: document.getElementById('c-mw-double-knife-rule').value === 'true',
   };
   const isReconfigure = _reconfigureMode;
   hideCustomModal();

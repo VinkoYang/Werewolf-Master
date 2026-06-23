@@ -973,6 +973,9 @@ class DaytimeFlowMixin:
             user.skill['pending_last_skill'] = False
             user.skill.pop('badge_action_taken', None)
         self.skill.pop('pending_day_bombs', None)
+        # 清除机械狼夜间状态标记
+        self.skill.pop('mw_guarded_this_round', None)
+        self.skill.pop('mw_double_knife_target', None)
         captain = self.skill.get('sheriff_captain')
         if captain and not self._is_alive(captain):
             self.skill['sheriff_captain'] = None

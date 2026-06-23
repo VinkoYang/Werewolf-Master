@@ -184,6 +184,16 @@
       <label>女巫规则 <select id="c-witch-rule" style="margin:0 8px;"></select></label><br><br>
       <label>守卫规则 <select id="c-guard-rule" style="margin:0 8px;"></select></label><br><br>
       <label>自曝警徽规则 <select id="c-bomb-rule" style="margin:0 8px;"></select></label><br><br>
+      <div id="c-mw-rules" style="display:none;">
+        <label>机械盾规则 <select id="c-mw-shield-rule" style="margin:0 8px;">
+          <option value="false">机械盾不挡猎人子弹</option>
+          <option value="true">机械盾抵挡猎人子弹</option>
+        </select></label><br><br>
+        <label>机械双刀狼规则 <select id="c-mw-double-knife-rule" style="margin:0 8px;">
+          <option value="false">双刀不可破盾</option>
+          <option value="true">双刀可破盾</option>
+        </select></label><br><br>
+      </div>
       <button class="btn btn-success" id="custom-modal-submit" onclick="submitCustomRoom()">创建</button>
     </div>
   </div>
@@ -203,6 +213,6 @@
 
 </div><!-- #app -->
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>
