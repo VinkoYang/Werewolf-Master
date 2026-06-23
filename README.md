@@ -160,6 +160,7 @@ python -m tests.simulate_12p --preset preset_dev_7
 | `game_config_nine_tailed_fox.py` | 预女猎尾 | 4狼 / 4村 / 预言家 / 女巫 / 猎人 / 九尾妖狐 |
 | `game_config_nightmare.py` | 梦魇 - 预女猎守 | 梦魇+3狼 / 4村 / 预言家 / 女巫 / 猎人 / 守卫 |
 | `game_config_wolf_beauty.py` | 狼美人 - 预女猎守 | 狼美人+3狼 / 4村 / 预言家 / 女巫 / 猎人 / 守卫 |
+| `game_config_mechanical_wolf_mirror.py` | 机械狼 - 镜隐迷踪 | 机械狼+3狼 / 4村 / 通灵师 / 女巫 / 猎人 / 守卫 |
 
 ### 3️⃣ 系统运行逻辑
 
@@ -193,3 +194,8 @@ python -m tests.simulate_12p --preset preset_dev_7
 3. 消息历史（`room.log`）无限增长，超 50000 条时截断，大型游戏可改为 Redis 持久化
 4. 多进程部署需配置 `python-socketio` 的 `AsyncRedisManager`，目前适合单进程运行
 5. `reconnect_token` 仅做内存校验，服务重启后所有用户需重新登录，可用 signed JWT 实现跨重启持久化
+
+
+## 开发记录
+
+[开发日志 →](doc/dev_log.md)

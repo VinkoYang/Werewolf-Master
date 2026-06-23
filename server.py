@@ -77,9 +77,9 @@ def _room_config_text(room: Room) -> str:
 
 def _room_config_dict(room: Room) -> dict:
     """Extract current room config as a dict matching the custom-form format."""
-    GOD_WOLF = {Role.WOLF_KING, Role.WHITE_WOLF_KING, Role.NIGHTMARE, Role.WOLF_BEAUTY}
+    GOD_WOLF = {Role.WOLF_KING, Role.WHITE_WOLF_KING, Role.NIGHTMARE, Role.WOLF_BEAUTY, Role.MECHANICAL_WOLF}
     GOD_CITIZEN = {Role.SEER, Role.WITCH, Role.GUARD, Role.HUNTER, Role.DREAMER,
-                   Role.IDIOT, Role.HALF_BLOOD, Role.NINE_TAILED_FOX}
+                   Role.IDIOT, Role.HALF_BLOOD, Role.NINE_TAILED_FOX, Role.MAGIC_MIRROR_GIRL}
     from collections import Counter
     counter = Counter(room.roles)
     return {
@@ -327,7 +327,9 @@ def _compute_actions(user: User, room: Optional[Room]) -> list:
     # Night confirm button
     NIGHT_STAGES = {GameStage.HALF_BLOOD, GameStage.NIGHTMARE, GameStage.WOLF,
                     GameStage.WOLF_BEAUTY, GameStage.SEER, GameStage.WITCH,
-                    GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER}
+                    GameStage.GUARD, GameStage.HUNTER, GameStage.WOLF_KING, GameStage.DREAMER,
+                    GameStage.MECHANICAL_WOLF_LEARN, GameStage.MECHANICAL_WOLF_ACT,
+                    GameStage.MAGIC_MIRROR_GIRL}
     if (room.stage in NIGHT_STAGES and user.role_instance and
             user.role_instance.can_act_at_night and user.role_instance.needs_global_confirm):
         ops += [_stub_actions(name='confirm_action', buttons=['确认'], help_text='确认当前选择（20秒内）')]
@@ -381,6 +383,21 @@ async def push_room_state_all(room: Room):
     """Push state to every connected player in a room."""
     for user in list(room.players.values()):
         await push_state(user)
+
+
+async def broadcast_lobby():
+    """Push an updated room list to all users currently in the lobby (no room)."""
+    lobby_payload = {
+        'rooms': build_room_info_lines(),
+        'creation_sections': ROOM_CREATION_SECTIONS,
+        'game_resource_links': GAME_RESOURCE_LINKS,
+        'guide_links': GUIDE_LINKS,
+        'dev_links': DEV_LINKS,
+        'feedback_link': FEEDBACK_LINK,
+    }
+    for user in list(Global.users.values()):
+        if not user.room and user.sid:
+            await sio.emit('lobby', lobby_payload, to=user.sid)
 
 
 def _get_countdown_context(room: Optional[Room]) -> Tuple[Optional[str], Optional[int], Optional[str]]:
@@ -895,6 +912,7 @@ async def on_create_room(sid, data):
     room.add_player(user)
     user.send_msg(f'房间配置：{_room_config_text(room)}')
     await push_state(user)
+    await broadcast_lobby()
 
 
 @sio.on('join_room')
@@ -914,6 +932,7 @@ async def on_join_room(sid, data):
         return
     user.send_msg(f'房间配置：{_room_config_text(room)}')
     await push_room_state_all(room)
+    await broadcast_lobby()
 
 
 @sio.on('select_seat')
@@ -1018,6 +1037,7 @@ async def on_leave_room(sid, data):
     await push_state(user)
     if room.players:
         await push_room_state_all(room)
+    await broadcast_lobby()
 
 
 @sio.on('logout')

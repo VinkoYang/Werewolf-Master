@@ -176,6 +176,12 @@ class NetworkWatcher:
             await self._act_guard()
         elif stage == GameStage.HUNTER:
             await self._act_hunter_night()
+        elif stage == GameStage.MAGIC_MIRROR_GIRL:
+            await self._act_magic_mirror_girl()
+        elif stage == GameStage.MECHANICAL_WOLF_LEARN:
+            await self._act_mechanical_wolf_learn()
+        elif stage == GameStage.MECHANICAL_WOLF_ACT:
+            await self._act_mechanical_wolf_act()
         else:
             await self._act_generic_night()
 
@@ -255,6 +261,50 @@ class NetworkWatcher:
                 continue
             if self._has_action(user, 'hunter_confirm'):
                 await self._dispatch(user, {'hunter_confirm': '确认'})
+
+    async def _act_magic_mirror_girl(self):
+        for user in list(self.room.players.values()):
+            ri = user.role_instance
+            if not ri or not ri.should_act():
+                continue
+            btns = self._buttons(user, 'magic_mirror_op')
+            valid = [v for v in btns if v != '放弃']
+            if valid:
+                target = random.choice(valid)
+                await self._dispatch(user, {'magic_mirror_op': target})
+                await self._dispatch(user, {'confirm_action': '确认'})
+            elif '放弃' in btns:
+                await self._dispatch(user, {'magic_mirror_op': '放弃'})
+
+    async def _act_mechanical_wolf_learn(self):
+        for user in list(self.room.players.values()):
+            ri = user.role_instance
+            if not ri or not ri.should_act():
+                continue
+            btns = self._buttons(user, 'mw_learn_op')
+            valid = [v for v in btns if v != '放弃']
+            if valid:
+                target = random.choice(valid)
+                await self._dispatch(user, {'mw_learn_op': target})
+                await self._dispatch(user, {'confirm_action': '确认'})
+            elif '放弃' in btns:
+                await self._dispatch(user, {'mw_learn_op': '放弃'})
+
+    async def _act_mechanical_wolf_act(self):
+        for user in list(self.room.players.values()):
+            ri = user.role_instance
+            if not ri or not ri.should_act():
+                continue
+            btns = self._buttons(user, 'mw_act_op')
+            valid = [v for v in btns if v != '放弃']
+            if valid:
+                target = random.choice(valid)
+                await self._dispatch(user, {'mw_act_op': target})
+                await self._dispatch(user, {'confirm_action': '确认'})
+            elif '放弃' in btns:
+                await self._dispatch(user, {'mw_act_op': '放弃'})
+            else:
+                user.skip(reason='timeout')
 
     async def _act_generic_night(self):
         """Fallback for special roles (梦魇, 狼美人, 半血, etc.)."""

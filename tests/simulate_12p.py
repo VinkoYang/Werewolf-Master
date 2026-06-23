@@ -47,7 +47,7 @@ from models.user import User
 from models.room import Room
 from models.lobby import resolve_room_config, build_roles_from_config, ROOM_PRESET_CONFIGS
 from enums import PlayerStatus, GameStage, Role
-from presets.base import WOLF_TEAM_ROLES
+from presets.base import WOLF_TEAM_ROLES, WOLF_CAMP_ROLES
 
 # Collect all modules that bind async_sleep locally (via `from utils import async_sleep`).
 # Patching _utils_mod.async_sleep alone doesn't reach these because each module already
@@ -153,10 +153,10 @@ class AutoWatcher:
                 if u.status in {PlayerStatus.ALIVE, PlayerStatus.PENDING_DEAD}]
 
     def wolves(self) -> list:
-        return [u for u in self.alive_players() if u.role in WOLF_TEAM_ROLES]
+        return [u for u in self.alive_players() if u.role in WOLF_CAMP_ROLES]
 
     def non_wolves(self) -> list:
-        return [u for u in self.alive_players() if u.role not in WOLF_TEAM_ROLES]
+        return [u for u in self.alive_players() if u.role not in WOLF_CAMP_ROLES]
 
     def sheriff(self):
         captain = self.room.skill.get('sheriff_captain')
@@ -178,6 +178,12 @@ class AutoWatcher:
             return self._act_guard()
         if stage == GameStage.HUNTER:
             return self._act_hunter_night()
+        if stage == GameStage.MECHANICAL_WOLF_LEARN:
+            return self._act_mechanical_wolf_learn()
+        if stage == GameStage.MECHANICAL_WOLF_ACT:
+            return self._act_mechanical_wolf_act()
+        if stage == GameStage.MAGIC_MIRROR_GIRL:
+            return self._act_magic_mirror_girl()
         # Fallback for special roles (梦魇, 半血, 狼美人, 狼王, etc.)
         for user in self.acting_players():
             ri = user.role_instance
@@ -265,6 +271,62 @@ class AutoWatcher:
             ri = user.role_instance
             if ri and ri.should_act():
                 ri.confirm()
+                return True
+        self.room.waiting = False
+        return True
+
+    def _act_mechanical_wolf_learn(self):
+        for user in self.acting_players():
+            ri = user.role_instance
+            if ri and ri.should_act():
+                candidates = [u for u in self.alive_players() if u.nick != user.nick]
+                if candidates:
+                    target = random.choice(candidates)
+                    label = f"{target.seat}. {target.nick}"
+                    rv = ri.select_learn_target(label)
+                    if rv == 'PENDING':
+                        ri.confirm()
+                else:
+                    ri.skip()
+                return True
+        self.room.waiting = False
+        return True
+
+    def _act_mechanical_wolf_act(self):
+        for user in self.acting_players():
+            ri = user.role_instance
+            if ri and ri.should_act():
+                available = ri.get_actions()
+                if available:
+                    candidates = [u for u in self.alive_players() if u.nick != user.nick]
+                    if candidates:
+                        target = random.choice(candidates)
+                        label = f"{target.seat}. {target.nick}"
+                        rv = ri.select_act_target(label)
+                        if rv == 'PENDING':
+                            ri.confirm()
+                        return True
+                # No active skill this phase (e.g. learned citizen/wolf but not all wolves dead)
+                ri.skip()
+                return True
+        self.room.waiting = False
+        return True
+
+    def _act_magic_mirror_girl(self):
+        for user in self.acting_players():
+            ri = user.role_instance
+            if ri and ri.should_act():
+                verified = user.skill.get('verified_players', set())
+                candidates = [u for u in self.alive_players()
+                              if u.nick != user.nick and u.nick not in verified]
+                if candidates:
+                    target = random.choice(candidates)
+                    label = f"{target.seat}. {target.nick}"
+                    rv = ri.verify_player(label)
+                    if rv == 'PENDING':
+                        ri.confirm()
+                else:
+                    ri.skip()
                 return True
         self.room.waiting = False
         return True

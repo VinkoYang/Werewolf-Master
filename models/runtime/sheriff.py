@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from utils import async_sleep
 
 from enums import GameStage, PlayerStatus, Role, SheriffBombRule
-from presets.base import WOLF_TEAM_ROLES
+from presets.base import WOLF_CAMP_ROLES
 
 if TYPE_CHECKING:  # pragma: no cover - used for typing only
     from models.user import User
@@ -166,7 +166,7 @@ class SheriffFlowMixin:
     def can_wolf_self_bomb(self: 'Room', user: 'User') -> bool:
         if not user or user.status != PlayerStatus.ALIVE:
             return False
-        if user.role not in WOLF_TEAM_ROLES:
+        if user.role not in WOLF_CAMP_ROLES:
             return False
         if user.role == Role.WOLF_BEAUTY:
             return False

@@ -14,7 +14,8 @@ if TYPE_CHECKING:
     from models.user import User
 
 WOLF_TEAM_ROLES = {Role.WOLF, Role.WOLF_KING, Role.WHITE_WOLF_KING, Role.NIGHTMARE, Role.WOLF_BEAUTY}
-GOD_ROLES = {Role.SEER, Role.WITCH, Role.GUARD, Role.HUNTER, Role.DREAMER, Role.IDIOT}
+WOLF_CAMP_ROLES = WOLF_TEAM_ROLES | {Role.MECHANICAL_WOLF}
+GOD_ROLES = {Role.SEER, Role.WITCH, Role.GUARD, Role.HUNTER, Role.DREAMER, Role.IDIOT, Role.MAGIC_MIRROR_GIRL}
 VILLAGER_ROLES = {Role.CITIZEN, Role.HALF_BLOOD}
 THIRD_PARTY_ROLES = {Role.NINE_TAILED_FOX}
 NIGHT_WAIT_STAGES = {
@@ -28,6 +29,9 @@ NIGHT_WAIT_STAGES = {
     GameStage.HUNTER,
     GameStage.WOLF_KING,
     GameStage.DREAMER,
+    GameStage.MECHANICAL_WOLF_LEARN,
+    GameStage.MECHANICAL_WOLF_ACT,
+    GameStage.MAGIC_MIRROR_GIRL,
 }
 
 
@@ -439,7 +443,9 @@ class DefaultGameFlow(BaseGameConfig):
             'pending_dream_target',
             'pending_target',
             'pending_half_blood_target',
-            'pending_fear'
+            'pending_fear',
+            'pending_learn',
+            'pending_act_target',
         ]
         for user in room.players.values():
             if user.skill.get('acted_this_stage', False):
@@ -485,7 +491,7 @@ class DefaultGameFlow(BaseGameConfig):
             if role == Role.HALF_BLOOD and user.skill.get('half_blood_camp', 'good') == 'wolf':
                 wolves.append(user)
                 continue
-            if role in WOLF_TEAM_ROLES:
+            if role in WOLF_CAMP_ROLES:
                 wolves.append(user)
                 continue
             if role in THIRD_PARTY_ROLES:

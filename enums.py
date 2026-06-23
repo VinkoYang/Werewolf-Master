@@ -36,6 +36,9 @@ class GameStage(Enum):
     WOLF_KING = '狼王'
     DREAMER = '摄梦人'          # 摄梦人阶段
     NINE_TAILED_FOX = '九尾妖狐'
+    MECHANICAL_WOLF_LEARN = '机械狼'       # 机械狼学习阶段（先于狼人行动）
+    MECHANICAL_WOLF_ACT = '机械狼行动'     # 机械狼行动阶段（在猎人之后）
+    MAGIC_MIRROR_GIRL = '通灵师'           # 通灵师查验阶段
     SHERIFF = '上警'           # 上警阶段
     SPEECH = '发言'            # 竞选发言阶段
     LAST_WORDS = '遗言'
@@ -62,6 +65,8 @@ class Role(PlainEnum):
     IDIOT = '白痴'
     HALF_BLOOD = '混血儿'
     NINE_TAILED_FOX = '九尾妖狐'
+    MECHANICAL_WOLF = '机械狼'
+    MAGIC_MIRROR_GIRL = '通灵师'
 
     @classmethod
     def as_god_citizen_options(cls) -> list:
@@ -94,6 +99,7 @@ class Role(PlainEnum):
             '白狼王': cls.WHITE_WOLF_KING,
             '梦魇': cls.NIGHTMARE,
             '狼美人': cls.WOLF_BEAUTY,
+            '机械狼': cls.MECHANICAL_WOLF,
         }
 
     @classmethod
@@ -103,10 +109,11 @@ class Role(PlainEnum):
             '女巫': cls.WITCH,
             '守卫': cls.GUARD,
             '猎人': cls.HUNTER,
-            '摄梦人': cls.DREAMER,   # 新增
+            '摄梦人': cls.DREAMER,
             '白痴': cls.IDIOT,
             '混血儿': cls.HALF_BLOOD,
             '九尾妖狐': cls.NINE_TAILED_FOX,
+            '通灵师': cls.MAGIC_MIRROR_GIRL,
         }
 
     @classmethod

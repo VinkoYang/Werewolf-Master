@@ -17,5 +17,6 @@ PRESET_WOLF_KING_DREAMER = 'preset_wolf_king_dreamer'
 PRESET_NINE_TAILED_FOX = 'preset_nine_tailed_fox'
 PRESET_NIGHTMARE = 'preset_nightmare'
 PRESET_WOLF_BEAUTY = 'preset_wolf_beauty'
+PRESET_MECHANICAL_WOLF_MIRROR = 'preset_mechanical_wolf_mirror'
 
 SPECIAL_PRESET_SECTION = '12人版型'

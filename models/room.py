@@ -30,6 +30,8 @@ from roles.white_wolf_king import WhiteWolfKing
 from roles.nine_tailed_fox import NineTailedFox
 from roles.nightmare import Nightmare
 from roles.wolf_beauty import WolfBeauty
+from roles.mechanical_wolf import MechanicalWolf
+from roles.magic_mirror_girl import MagicMirrorGirl
 
 role_classes = {
     Role.CITIZEN: Citizen,
@@ -46,6 +48,8 @@ role_classes = {
     Role.IDIOT: Idiot,
     Role.HALF_BLOOD: HalfBlood,
     Role.NINE_TAILED_FOX: NineTailedFox,
+    Role.MECHANICAL_WOLF: MechanicalWolf,
+    Role.MAGIC_MIRROR_GIRL: MagicMirrorGirl,
 }
 
 
