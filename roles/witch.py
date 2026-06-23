@@ -1,6 +1,6 @@
 # roles/witch.py
 from typing import Optional, List
-from pywebio.input import actions, radio
+from stub import actions, radio
 from utils import add_cancel_button
 from .base import RoleBase, player_action
 from enums import PlayerStatus, GameStage, WitchRule, Role

@@ -1,7 +1,7 @@
 # roles/half_blood.py
 import random
 from typing import List, Optional
-from pywebio.input import actions
+from stub import actions
 
 from .base import RoleBase, player_action
 from enums import PlayerStatus, GameStage, Role

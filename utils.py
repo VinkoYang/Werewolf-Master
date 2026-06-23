@@ -5,36 +5,16 @@ import re
 import socket
 import subprocess
 import threading
-import traceback
 from logging import getLogger
 from sys import platform
-
-try:
-    from pywebio.session import run_asyncio_coroutine
-    from pywebio.exceptions import SessionClosedException, SessionNotFoundException
-except ImportError:  # pragma: no cover - PyWebIO is required in runtime, but keep graceful fallback
-    run_asyncio_coroutine = None
-    SessionClosedException = RuntimeError
-    SessionNotFoundException = RuntimeError
 
 logger = getLogger('Utils')
 logger.setLevel('DEBUG')
 
 
 async def async_sleep(seconds: float):
-    """兼容 PyWebIO 环境的异步 sleep 函数"""
-    if seconds <= 0:
-        return
-
-    if run_asyncio_coroutine is not None:
-        try:
-            await run_asyncio_coroutine(asyncio.sleep(seconds))
-            return
-        except (RuntimeError, SessionClosedException, SessionNotFoundException):
-            # 当前上下文不是 PyWebIO（或会话已关闭），回退至默认 asyncio
-            pass
-
-    await asyncio.sleep(seconds)
+    if seconds > 0:
+        await asyncio.sleep(seconds)
 
 def rand_int(min_value=0, max_value=100):
     return random.randint(min_value, max_value)

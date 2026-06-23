@@ -1,6 +1,6 @@
 # roles/wolf_king.py
 from typing import Optional, List
-from pywebio.input import actions
+from stub import actions
 
 from enums import PlayerStatus, GameStage
 from .base import player_action
@@ -140,9 +140,11 @@ class WolfKing(Wolf):
             self.user.send_msg('目标不可用')
             return
         seat = target.seat if target.seat is not None else '?'
+        # True when we're resolving a daytime exile: pending_execution is set only during
+        # start_execution_sequence and cleared by end_day_phase.
         from_day_execution = (
             room.stage == GameStage.LAST_WORDS and
-            room.day_state.get('after_last_words') == 'day_skill_to_speech'
+            bool(room.day_state.get('pending_execution'))
         )
         room.handle_last_word_skill_kill(target.nick, from_day_execution=from_day_execution)
         room.broadcast_msg(f'{seat}号玩家被带走')

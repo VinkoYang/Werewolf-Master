@@ -9,7 +9,7 @@
 - 殉情者不能发动技能（猎人闷枪、狼王不能开爪）
 """
 from typing import Optional, List
-from pywebio.input import actions
+from stub import actions
 from .wolf import Wolf
 from .base import player_action
 from enums import PlayerStatus, GameStage, Role

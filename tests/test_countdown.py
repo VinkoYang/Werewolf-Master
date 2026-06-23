@@ -1,31 +1,83 @@
+"""Tests for the per-user countdown task in server.py."""
 import asyncio
+from unittest.mock import AsyncMock, patch, MagicMock
+
+from models.room import Room
+from models.user import User
+from models.system import Global
+from enums import GameStage
 
 
-class FakeUser:
-    def __init__(self):
-        self.game_msg = []
-        self.main_task_id = 'task-1'
+def _make_room_and_users():
+    u1 = User.alloc('Alice', 's1', 't1')
+    u2 = User.alloc('Bob',   's2', 't2')
+    u3 = User.alloc('Carol', 's3', 't3')
+    config = {
+        'wolf_num': 1, 'citizen_num': 1, 'god_wolf': [], 'god_citizen': ['预言家'],
+        'witch_rule': '仅第一夜可自救', 'guard_rule': '同时被守被救时，对象死亡',
+        'sheriff_bomb_rule': '双爆吞警徽',
+    }
+    room = Room.alloc(config)
+    for u in (u1, u2, u3):
+        room.add_player(u)
+    return room, u1, u2, u3
 
 
-async def countdown(user, seconds=3):
-    # 复制 main.py 中的显示样式（使用 3s 做快速测试）
-    for i in range(seconds, 0, -1):
-        # 模拟 put_html 返回的字符串追加到 game_msg
-        user.game_msg.append(f"<div style='color:#c00; font-weight:bold; font-size:18px'>倒计时：{i}s</div>")
-        await asyncio.sleep(1)
+def _cleanup(*users):
+    for u in users:
+        Global.users.pop(u.nick, None)
 
 
-def test_countdown_format_and_length():
-    user = FakeUser()
-    asyncio.run(countdown(user, seconds=3))
+def test_countdown_emits_tick_then_clear():
+    """_countdown sends countdown_tick each second and countdown_clear at the end."""
+    emitted = []
 
-    # 检查条目数量
-    assert len(user.game_msg) == 3
+    async def fake_emit(event, data=None, to=None):
+        emitted.append((event, data))
 
-    # 检查格式与样式
-    expected = [
-        "<div style='color:#c00; font-weight:bold; font-size:18px'>倒计时：3s</div>",
-        "<div style='color:#c00; font-weight:bold; font-size:18px'>倒计时：2s</div>",
-        "<div style='color:#c00; font-weight:bold; font-size:18px'>倒计时：1s</div>",
-    ]
-    assert user.game_msg == expected
+    async def run():
+        from server import _countdown
+        room, u1, u2, u3 = _make_room_and_users()
+        u1.sid = 'sid1'
+        u1.skill['countdown_skip_timeout'] = False  # allow timeout to fire
+
+        with patch('server.sio') as mock_sio:
+            mock_sio.emit = fake_emit
+            # Run a 3-second countdown
+            await _countdown(u1, seconds=3)
+
+        _cleanup(u1, u2, u3)
+
+    asyncio.run(run())
+
+    tick_events = [d['seconds'] for e, d in emitted if e == 'countdown_tick']
+    clear_events = [e for e, d in emitted if e == 'countdown_clear']
+
+    assert tick_events == [3, 2, 1], f"Unexpected ticks: {tick_events}"
+    assert len(clear_events) == 1, "Expected exactly one countdown_clear"
+
+
+def test_countdown_respects_skip_flag():
+    """Setting countdown_skip_timeout before countdown ends prevents timeout logic."""
+    timeout_fired = []
+
+    async def run():
+        from server import _countdown
+        room, u1, u2, u3 = _make_room_and_users()
+        u1.sid = 'sid1'
+
+        async def fake_emit(event, data=None, to=None):
+            # After first tick, set skip flag
+            if event == 'countdown_tick' and data.get('seconds') == 2:
+                u1.skill['countdown_skip_timeout'] = True
+
+        with patch('server.sio') as mock_sio:
+            mock_sio.emit = fake_emit
+            await _countdown(u1, seconds=3)
+
+        timeout_fired.append(u1.skill.get('countdown_skip_timeout', False))
+        _cleanup(u1, u2, u3)
+
+    asyncio.run(run())
+    # Skip flag should have been consumed (popped) inside _countdown
+    assert timeout_fired[0] is False

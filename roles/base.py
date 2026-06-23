@@ -1,7 +1,7 @@
 # roles/base.py
 import inspect
 from typing import Optional, List
-from pywebio.input import actions
+from stub import actions
 from utils import add_cancel_button
 
 from enums import GameStage

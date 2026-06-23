@@ -1,4 +1,6 @@
-pywebio>=1.5
-tornado
-user-agents>=2.2.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-socketio>=5.11
+aiofiles>=23.0
 pyngrok
+user-agents>=2.2.0

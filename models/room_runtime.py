@@ -90,10 +90,9 @@ class RoomRuntimeMixin(SheriffFlowMixin, DaytimeFlowMixin):
 
     def _format_label(self, nick: str) -> str:
         player = self.players.get(nick)
-        if not player:
+        if not player or not player.seat:
             return nick
-        seat = player.seat or '?'
-        return f"{seat}号{player.nick}"
+        return f"{player.seat}号"
 
     def _is_alive(self, nick: str) -> bool:
         player = self.players.get(nick)

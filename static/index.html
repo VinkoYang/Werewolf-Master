@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Moon Verdict 月光审判 – 狼人杀</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #FFF8EA; color: #2b2b2b; }
+
+  #app { max-width: 900px; margin: 0 auto; padding: 16px; }
+
+  h1 { font-size: 1.4rem; color: #7a3b00; margin-bottom: 12px; }
+
+  /* ── Screens ── */
+  .screen { display: none; }
+  .screen.active { display: block; }
+
+  /* ── Cards ── */
+  .card {
+    background: #FAF3E1; border: 1px solid #E4D5B3; border-radius: 12px;
+    padding: 14px 18px; margin-bottom: 14px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+  }
+  .card h3 { font-size: 1rem; margin-bottom: 8px; color: #5a3300; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-block; padding: 7px 16px; border-radius: 8px; border: none;
+    cursor: pointer; font-size: 0.9rem; margin: 4px; transition: opacity 0.15s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-success { background: #28a745; color: #fff; }
+  .btn-primary { background: #007bff; color: #fff; }
+  .btn-danger  { background: #dc3545; color: #fff; }
+  .btn-warning { background: #ffc107; color: #212529; }
+  .btn-secondary { background: #6c757d; color: #fff; }
+  .btn-info    { background: #17a2b8; color: #fff; }
+  .btn-light   { background: #f8f9fa; color: #212529; border: 1px solid #ccc; }
+
+  /* ── Login ── */
+  #login-screen input {
+    padding: 10px 14px; border: 1px solid #ccc; border-radius: 8px;
+    font-size: 1rem; width: 260px; margin-right: 8px;
+  }
+
+  /* ── Messages ── */
+  #msg-box {
+    height: 360px; overflow-y: auto; background: #fff;
+    border: 1px solid #ddd; border-radius: 8px;
+    padding: 10px; font-size: 0.88rem; line-height: 1.6;
+  }
+  .msg-public  { color: #1a1a1a; }
+  .msg-private { color: #c00; font-weight: 600; }
+
+  /* ── Countdown ── */
+  #countdown-bar {
+    font-size: 1.4rem; font-weight: bold; color: #c00;
+    min-height: 36px; margin: 8px 0;
+  }
+
+  /* ── Seat panel ── */
+  #seat-table { border-collapse: collapse; width: 100%; margin-top: 6px; }
+  #seat-table td { padding: 4px 6px; }
+
+  /* ── Actions ── */
+  #actions-panel .action-group { margin-bottom: 10px; }
+  #actions-panel .action-help  { font-size: 0.8rem; color: #666; margin-bottom: 4px; }
+
+  /* ── Lobby links ── */
+  .link-section a { display: inline-block; margin: 3px 4px; text-decoration: none; color: #555; }
+  .link-section a:hover { text-decoration: underline; }
+
+  /* ── Status bar ── */
+  #status-bar { font-size: 0.8rem; color: #888; padding: 4px 0 8px; }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    background: #333; color: #fff; padding: 8px 20px; border-radius: 8px;
+    font-size: 0.9rem; display: none; z-index: 9999; max-width: 90vw; text-align: center;
+  }
+
+  /* ── Room list ── */
+  #room-list button { display: block; width: 100%; text-align: left; margin: 4px 0; }
+
+  /* ── Preset grid ── */
+  #preset-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  #preset-grid button { flex: 0 0 auto; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Toast notification -->
+  <div id="toast"></div>
+
+  <!-- ══ LOGIN ══════════════════════════════════════════════════════════════ -->
+  <div id="login-screen" class="screen active">
+    <h1>🐺 Moon Verdict 月光审判</h1>
+    <div class="card">
+      <h3>欢迎，请输入昵称</h3>
+      <input id="nick-input" type="text" placeholder="你的昵称" maxlength="20">
+      <button class="btn btn-success" onclick="doLogin()">进入大厅</button>
+      <p id="login-error" style="color:red;margin-top:8px;font-size:0.85rem;"></p>
+    </div>
+  </div>
+
+  <!-- ══ LOBBY ══════════════════════════════════════════════════════════════ -->
+  <div id="lobby-screen" class="screen">
+    <h1>🎮 大厅</h1>
+    <div id="status-bar"></div>
+    <div class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <button class="btn btn-success" onclick="showCreateModal()">创建房间</button>
+      <button class="btn btn-primary" onclick="showJoinModal()">加入房间</button>
+      <button class="btn btn-light" onclick="refreshLobby()">刷新</button>
+      <button class="btn btn-secondary" onclick="doLogout()" style="margin-left:auto;">退出登录</button>
+    </div>
+
+    <div class="card">
+      <h3>当前房间</h3>
+      <div id="room-list"><p style="color:#888">暂无房间</p></div>
+    </div>
+
+    <div id="lobby-links"></div>
+  </div>
+
+  <!-- ══ IN-ROOM ════════════════════════════════════════════════════════════ -->
+  <div id="room-screen" class="screen">
+    <h1>🐺 Moon Verdict <span id="room-title" style="font-size:1rem;color:#666"></span></h1>
+    <div id="status-bar2"></div>
+
+    <div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <span id="stage-label" style="font-weight:bold;font-size:1.05rem;"></span>
+      <span id="role-label"  style="color:#7a3b00;font-weight:bold;"></span>
+      <button class="btn btn-danger"  onclick="doLeaveRoom()" id="leave-btn" style="margin-left:auto;">离开房间</button>
+    </div>
+
+    <div class="card">
+      <h3>座位</h3>
+      <div id="seat-panel"></div>
+    </div>
+
+    <div class="card">
+      <h3>消息</h3>
+      <div id="msg-box"></div>
+    </div>
+
+    <div class="card">
+      <h3>房间操作</h3>
+      <button class="btn btn-info" onclick="viewConfig()">查看配置</button>
+    </div>
+
+    <div class="card">
+      <div id="countdown-bar">—</div>
+      <div id="actions-panel"></div>
+    </div>
+  </div>
+
+  <!-- ══ CREATE ROOM MODAL ══════════════════════════════════════════════════ -->
+  <div id="create-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1000;overflow-y:auto;">
+    <div style="background:#fff;max-width:520px;margin:40px auto;border-radius:14px;padding:24px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h3>创建房间</h3>
+        <button class="btn btn-danger" onclick="hideCreateModal()">✕</button>
+      </div>
+      <div id="preset-sections"></div>
+    </div>
+  </div>
+
+  <!-- ══ CUSTOM CONFIG MODAL ════════════════════════════════════════════════ -->
+  <div id="custom-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1001;overflow-y:auto;">
+    <div style="background:#fff;max-width:480px;margin:40px auto;border-radius:14px;padding:24px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h3 id="custom-modal-title">手动配置房间</h3>
+        <button class="btn btn-danger" onclick="hideCustomModal()">✕</button>
+      </div>
+      <label>普通狼数 <input id="c-wolf" type="number" value="3" min="0" max="10" style="width:60px;margin:0 8px;"></label><br><br>
+      <label>普通村民数 <input id="c-citizen" type="number" value="4" min="0" max="10" style="width:60px;margin:0 8px;"></label><br><br>
+      <div id="c-god-wolf-opts"></div><br>
+      <div id="c-god-citizen-opts"></div><br>
+      <label>女巫规则 <select id="c-witch-rule" style="margin:0 8px;"></select></label><br><br>
+      <label>守卫规则 <select id="c-guard-rule" style="margin:0 8px;"></select></label><br><br>
+      <label>自曝警徽规则 <select id="c-bomb-rule" style="margin:0 8px;"></select></label><br><br>
+      <button class="btn btn-success" id="custom-modal-submit" onclick="submitCustomRoom()">创建</button>
+    </div>
+  </div>
+
+  <!-- ══ JOIN ROOM MODAL ════════════════════════════════════════════════════ -->
+  <div id="join-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1000;">
+    <div style="background:#fff;max-width:400px;margin:100px auto;border-radius:14px;padding:24px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h3>加入房间</h3>
+        <button class="btn btn-danger" onclick="hideJoinModal()">✕</button>
+      </div>
+      <input id="join-room-id" type="text" placeholder="输入房间号" style="width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:1rem;margin-bottom:10px;">
+      <button class="btn btn-primary" onclick="doJoinRoom()">加入</button>
+      <div id="join-room-list" style="margin-top:14px;"></div>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<script src="/static/app.js"></script>
+</body>
+</html>
