@@ -345,6 +345,8 @@ class DefaultGameFlow(BaseGameConfig):
             if stage == GameStage.WOLF_BEAUTY and user.role == Role.WOLF_BEAUTY:
                 user.skill.pop('wolf_beauty_stage_ready', None)
                 user.skill.pop('wolf_beauty_action_notified', None)
+            if stage == GameStage.HUNTER and user.role == Role.HUNTER:
+                user.skill.pop('hunter_msg_sent', None)
 
         room.broadcast_msg(f'{stage.value}请出现', tts=True)
         await async_sleep(1)

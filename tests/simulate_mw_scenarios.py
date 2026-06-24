@@ -1,11 +1,17 @@
 """
-两个指定场景模拟（机械狼-镜隐迷踪 版型）
+四个指定场景模拟（机械狼-镜隐迷踪 版型）
 
 场景A：机械狼第1晚学习通灵师，通灵师第1晚查验机械狼
   → 通灵师查验结果：通灵师（被伪装欺骗！）
 
 场景B：机械狼第1晚学习女巫，通灵师第1晚查验机械狼
   → 通灵师查验结果：女巫（机械狼伪装成女巫）
+
+场景C：机械狼第1晚学习守卫（机械盾），通灵师第1晚查验机械狼
+  → 通灵师查验结果：守卫（机械狼伪装成守卫）
+
+场景D：机械狼第1晚学习猎人，通灵师第1晚查验机械狼，第2晚狼刀机械狼
+  → 通灵师查验结果：猎人；机械狼被刀后触发猎人技能开枪
 
 用法（从项目根目录运行）：
     python -m tests.simulate_mw_scenarios
@@ -104,16 +110,20 @@ def find_by_role(room: Room, role: Role):
 
 class ScenarioWatcher:
     """
-    AutoWatcher 变体：
-    - 机械狼 LEARN 阶段第 1 晚强制学习 forced_mw_learn_role，后续随机。
-    - 通灵师第 1 晚强制查验机械狼，后续随机。
+    可配置的场景驱动器：
+    - forced_mw_learn_role: 机械狼第1晚强制学习的角色
+    - force_wolves_kill_mw_night: 该夜强制所有存活狼人击杀机械狼（模拟狼刀机械狼）
+    - mmg_checks_mw_night: 该夜通灵师强制查验机械狼（默认第1晚）
     """
 
-    def __init__(self, room: Room, forced_mw_learn_role: Role):
+    def __init__(self, room: Room, forced_mw_learn_role: Role, *,
+                 force_wolves_kill_mw_night: int = None,
+                 mmg_checks_mw_night: int = 1):
         self.room = room
         self.forced_mw_learn_role = forced_mw_learn_role
+        self.force_wolves_kill_mw_night = force_wolves_kill_mw_night
+        self.mmg_checks_mw_night = mmg_checks_mw_night
         self._seer_checked: set = set()
-        self._mmg_checked: set = set()
 
     def alive_players(self) -> list:
         return [u for u in self.room.players.values() if u.status == PlayerStatus.ALIVE]
@@ -163,6 +173,17 @@ class ScenarioWatcher:
         return True
 
     def _act_wolves(self):
+        # 特定夜晚强制狼人击杀机械狼（场景D：模拟狼队误刀机械狼）
+        if (self.force_wolves_kill_mw_night
+                and self.room.round == self.force_wolves_kill_mw_night):
+            mw = find_by_role(self.room, Role.MECHANICAL_WOLF)
+            if mw:
+                for user in self.alive_players():
+                    ri = user.role_instance
+                    if ri and ri.should_act():
+                        ri.kill_player(f"{mw.seat}. {mw.nick}")
+                return True
+
         targets = self.non_wolves()
         for user in self.alive_players():
             ri = user.role_instance
@@ -198,7 +219,8 @@ class ScenarioWatcher:
             if ri and ri.should_act():
                 pending_dead = [p for p in self.room.players.values()
                                 if p.status == PlayerStatus.PENDING_DEAD]
-                if pending_dead and ri.has_heal():
+                effective_dead = [p for p in pending_dead if not ri._self_rescue_blocked(p)]
+                if effective_dead and ri.has_heal():
                     ri.heal_player('confirm_heal')
                 elif ri.has_poison():
                     poison_targets = [u for u in self.alive_players() if u.nick != user.nick]
@@ -272,11 +294,32 @@ class ScenarioWatcher:
             if ri and ri.should_act():
                 available = ri.get_actions()
                 if available:
-                    # If all buttons are '放弃', this is an acknowledge-only phase (no active skill)
+                    # 若所有按钮 value 为 '放弃'，说明是知晓型阶段（无主动技能）
                     buttons = available[0].get('buttons', [])
                     if all(b.get('value') == '放弃' for b in buttons):
                         ri.select_act_target('放弃')
                         return True
+                    # 双刀第一刀（name='mw_knife_first'）
+                    if available[0].get('name') == 'mw_knife_first':
+                        candidates = [u for u in self.alive_players() if u.nick != user.nick]
+                        if candidates:
+                            first = random.choice(candidates)
+                            rv = ri.select_first_knife_target(f"{first.seat}. {first.nick}")
+                            if rv == 'PENDING':
+                                # 选第二刀（不同目标）
+                                second_candidates = [u for u in self.alive_players()
+                                                     if u.nick != user.nick and u.nick != first.nick]
+                                if second_candidates:
+                                    second = random.choice(second_candidates)
+                                    rv2 = ri.select_act_target(f"{second.seat}. {second.nick}")
+                                    if rv2 == 'PENDING':
+                                        ri.confirm()
+                                else:
+                                    ri.select_act_target('放弃')
+                        else:
+                            ri.skip()
+                        return True
+                    # 普通目标选择
                     candidates = [u for u in self.alive_players() if u.nick != user.nick]
                     if candidates:
                         target = random.choice(candidates)
@@ -293,8 +336,8 @@ class ScenarioWatcher:
         for user in self.acting_players():
             ri = user.role_instance
             if ri and ri.should_act():
-                # 第1晚强制查验机械狼，后续随机（排除已查验过的）
-                if self.room.round == 1:
+                # 指定夜晚强制查验机械狼，其他夜晚随机（排除已查验）
+                if self.room.round == self.mmg_checks_mw_night:
                     mw = find_by_role(self.room, Role.MECHANICAL_WOLF)
                     target = mw if mw and mw.nick != user.nick else None
                     if not target:
@@ -424,7 +467,11 @@ class ScenarioWatcher:
             if current and current in self.room.players:
                 user = self.room.players[current]
                 ri = user.role_instance
+                # Hunter 主动开枪模式（已选 '发动技能'，等待选目标）
                 if ri and hasattr(ri, 'in_shoot_mode') and ri.in_shoot_mode():
+                    self._hunter_shoot(user, ri)
+                # MW 猎人技能开枪模式（private 方法，通过 get_actions 判断）
+                elif ri and self._mw_in_shoot_mode(ri):
                     self._hunter_shoot(user, ri)
                 elif not user.skill.get('last_words_skill_resolved', False):
                     if (ri and hasattr(ri, 'supports_last_skill')
@@ -443,7 +490,16 @@ class ScenarioWatcher:
             else:
                 self.room.day_state['phase'] = 'done'
 
+    def _mw_in_shoot_mode(self, ri) -> bool:
+        """通过 get_actions() 返回值判断机械狼是否处于猎人技能开枪模式。"""
+        try:
+            available = ri.get_actions()
+            return bool(available and available[0].get('name') == 'mw_shoot_target')
+        except Exception:
+            return False
+
     def _hunter_shoot(self, user, ri):
+        """猎人/机械狼（猎人技能）随机射杀一名存活玩家。"""
         other_targets = [u for u in self.alive_players() if u.nick != user.nick]
         target = random.choice(other_targets) if other_targets else None
         if target:
@@ -464,7 +520,10 @@ class ScenarioWatcher:
 
 # ── Runner ────────────────────────────────────────────────────────────────────
 
-async def run_scenario(label: str, forced_mw_learn_role: Role):
+async def run_scenario(label: str, forced_mw_learn_role: Role, *,
+                       force_wolves_kill_mw_night: int = None,
+                       mmg_checks_mw_night: int = 1,
+                       seed: int = 42):
     print(f'\n{"="*60}')
     print(f'  {label}')
     print(f'{"="*60}\n')
@@ -473,12 +532,18 @@ async def run_scenario(label: str, forced_mw_learn_role: Role):
         _m.async_sleep = _fast_sleep
     _DGF.wait_for_player = _fast_wait_for_player
 
+    random.seed(seed)
+
     users = make_users(12)
     room = setup_room('preset_mechanical_wolf_mirror', users)
 
     print(f'房间 {room.id}：{len(room.players)} 名玩家')
 
-    watcher = ScenarioWatcher(room, forced_mw_learn_role)
+    watcher = ScenarioWatcher(
+        room, forced_mw_learn_role,
+        force_wolves_kill_mw_night=force_wolves_kill_mw_night,
+        mmg_checks_mw_night=mmg_checks_mw_night,
+    )
     watcher_task = asyncio.create_task(watcher.run())
 
     print('\n--- 游戏开始 ---')
@@ -508,18 +573,29 @@ async def run_scenario(label: str, forced_mw_learn_role: Role):
 
 
 async def main():
-    random.seed(42)
-
     await run_scenario(
         '场景A：机械狼第1晚学习通灵师，通灵师第1晚查验机械狼',
         forced_mw_learn_role=Role.MAGIC_MIRROR_GIRL,
+        seed=42,
     )
-
-    random.seed(99)
 
     await run_scenario(
         '场景B：机械狼第1晚学习女巫，通灵师第1晚查验机械狼',
         forced_mw_learn_role=Role.WITCH,
+        seed=99,
+    )
+
+    await run_scenario(
+        '场景C：机械狼第1晚学习守卫（机械盾），通灵师第1晚查验机械狼',
+        forced_mw_learn_role=Role.GUARD,
+        seed=77,
+    )
+
+    await run_scenario(
+        '场景D：机械狼第1晚学习猎人，通灵师第1晚查验机械狼，第2晚狼刀机械狼',
+        forced_mw_learn_role=Role.HUNTER,
+        force_wolves_kill_mw_night=2,
+        seed=55,
     )
 
 

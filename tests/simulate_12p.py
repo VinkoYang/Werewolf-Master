@@ -230,7 +230,8 @@ class AutoWatcher:
             if ri and ri.should_act():
                 pending_dead = [p for p in self.room.players.values()
                                 if p.status == PlayerStatus.PENDING_DEAD]
-                if pending_dead and ri.has_heal():
+                effective_dead = [p for p in pending_dead if not ri._self_rescue_blocked(p)]
+                if effective_dead and ri.has_heal():
                     ri.heal_player('confirm_heal')
                 elif ri.has_poison():
                     poison_targets = [u for u in self.alive_players() if u.nick != user.nick]

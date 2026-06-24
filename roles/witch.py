@@ -31,6 +31,17 @@ class Witch(RoleBase):
     def has_poison(self) -> bool:
         return self.user.skill.get('poison', False)
 
+    def _self_rescue_blocked(self, target) -> bool:
+        """True if this target is self and the current rule forbids self-rescue."""
+        if target.nick != self.user.nick:
+            return False
+        rule = self.user.room.witch_rule
+        if rule == WitchRule.NO_SELF_RESCUE:
+            return True
+        if rule == WitchRule.SELF_RESCUE_FIRST_NIGHT_ONLY and self.user.room.round != 1:
+            return True
+        return False
+
     def get_actions(self) -> List:
         room = self.user.room
         if not room or room.stage != GameStage.WITCH:
@@ -53,14 +64,22 @@ class Witch(RoleBase):
         # 解药：仅当有解药时才显示
         if self.has_heal():
             if pending_targets:
-                msg = f"今夜{pending_seats}号玩家被杀，是否使用解药？"
-                inputs.append(
-                    actions(
-                        name='witch_heal_confirm',
-                        buttons=[{'label': '确认使用解药', 'value': 'confirm_heal', 'color': 'success'}],
-                        help_text=msg
+                effective_targets = [t for t in pending_targets if not self._self_rescue_blocked(t)]
+                if effective_targets:
+                    seats = ', '.join(str(t.seat) for t in effective_targets)
+                    msg = f"今夜{seats}号玩家被杀，是否使用解药？"
+                    inputs.append(
+                        actions(
+                            name='witch_heal_confirm',
+                            buttons=[{'label': '确认使用解药', 'value': 'confirm_heal', 'color': 'success'}],
+                            help_text=msg
+                        )
                     )
-                )
+                else:
+                    # 唯一被杀的是女巫自己且规则禁止自救
+                    if not self.user.skill.get('witch_no_kill_msg_sent', False):
+                        self.user.send_msg('你被击杀，但规则不允许自救，无法使用解药。')
+                        self.user.skill['witch_no_kill_msg_sent'] = True
             else:
                 # 无人被杀的提示通过私聊发送一次
                 if not self.user.skill.get('witch_no_kill_msg_sent', False):
@@ -134,12 +153,8 @@ class Witch(RoleBase):
         
         saved = []
         for target in pending:
-            if room.witch_rule == WitchRule.NO_SELF_RESCUE and target.nick == self.user.nick:
-                return '不能解救自己'
-            if room.witch_rule == WitchRule.SELF_RESCUE_FIRST_NIGHT_ONLY:
-                if target.nick == self.user.nick and room.round != 1:
-                    return '仅第一晚可以解救自己'
-            
+            if self._self_rescue_blocked(target):
+                continue
             if target.status == PlayerStatus.PENDING_DEAD:
                 target.status = PlayerStatus.PENDING_HEAL
                 saved.append(target)

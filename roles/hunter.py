@@ -96,11 +96,14 @@ class Hunter(RoleBase):
 
     @player_action
     def confirm(self) -> Optional[str]:
-        # 猎人夜晚只是查看状态，标记为已行动即可
         self.user.skill['acted_this_stage'] = True
-        # 清理消息发送标志
         self.user.skill.pop('hunter_msg_sent', None)
         return True
+
+    @player_action
+    def skip(self):
+        self.user.skill['acted_this_stage'] = True
+        self.user.skill.pop('hunter_msg_sent', None)
 
     def supports_last_skill(self) -> bool:
         return True
